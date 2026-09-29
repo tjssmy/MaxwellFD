@@ -1,0 +1,1 @@
+"""Constants and small helpers."""

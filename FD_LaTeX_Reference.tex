@@ -1,0 +1,986 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{enumitem}
+
+\geometry{margin=1in}
+\numberwithin{equation}{section}
+\setlist[itemize]{itemsep=0.2em,topsep=0.3em}
+\setlist[enumerate]{itemsep=0.2em,topsep=0.3em}
+
+\title{\textbf{Yee-Cell Finite-Difference Solver for 2D Electromagnetics}\\[0.4em]
+\large Formulation, Discretization, and Implementation Plan\\
+with a Roadmap to GSTC Metasurfaces}
+\author{Tom Smy}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This note is the specification for MaxwellFD, a Python finite-difference code
+on a uniform Cartesian Yee grid. One grid, one material sampling, and one pair
+of discrete curls serve both the leapfrog scheme (FDTD) and the time-harmonic
+sparse scheme (FDFD). Phasors use $e^{j\omega t}$, the same convention as the
+sibling surface code MaxwellMOM. The derivation below is two-dimensional, for
+TMz and TEz, in free space and in a uniform isotropic medium. PEC and periodic
+walls, the CFL limit, numerical dispersion, a stretched-coordinate PML, and a
+resistive sheet are written out so later slices can code them against equation
+numbers. The non-dispersive GSTC subcell is the symmetric Yee cell: the face
+unknowns and the local system are derived here. Spatially varying $\chi$,
+Bloch cells, and dispersive $\chi$ are specified as checks, not as this
+slice's code.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Mathematical formulation}
+\label{sec:formulation}
+
+\subsection{Maxwell's equations}
+\label{sec:maxwell}
+
+Fields are in SI units. The time convention is $e^{j\omega t}$, so a wave
+$e^{-jk\hat{\mathbf{k}}\cdot\mathbf{r}}$ propagates in the direction
+$\hat{\mathbf{k}}$ and $\partial_t$ becomes $j\omega$. With an impressed
+current $\mathbf{J}$,
+\begin{align}
+\nabla\times\mathbf{E} &= -j\omega\mu\,\mathbf{H}, \label{eq:faraday}\\
+\nabla\times\mathbf{H} &= j\omega\varepsilon\,\mathbf{E}+\mathbf{J}. \label{eq:ampere}
+\end{align}
+Conduction is not a second current on the right. It stays in a real
+conductivity $\sigma$ that the time stepper absorbs into its coefficients, or,
+in a later frequency-domain material, in a complex permittivity. The
+constants $c_0$, $\varepsilon_0$, $\mu_0$, and $\eta_0$ are the SI values used
+by MaxwellMOM. In a uniform lossless medium $c=1/\sqrt{\mu\varepsilon}$ and
+$\eta=\sqrt{\mu/\varepsilon}$.
+
+The impressed current is the source. A plane wave, a dipole, and a Gaussian
+beam are later special cases of $\mathbf{J}$ or of a total-field/scattered-field
+boundary. Milestone~1 does not inject those sources. Its free-space check is a
+periodic eigenmode, and its cavity check is a source-free resonance.
+
+\subsection{Two-dimensional reductions}
+\label{sec:polarizations}
+
+The grid lies in the $xy$-plane and nothing depends on $z$.
+
+\paragraph{TMz.}
+The unknowns are $E_z$, $H_x$, and $H_y$. Equations~\eqref{eq:faraday}
+and~\eqref{eq:ampere} reduce to
+\begin{align}
+\partial_y E_z + j\omega\mu H_x &= 0, \label{eq:tm-hx}\\
+-\partial_x E_z + j\omega\mu H_y &= 0, \label{eq:tm-hy}\\
+\partial_x H_y - \partial_y H_x - j\omega\varepsilon E_z &= J_z. \label{eq:tm-ez}
+\end{align}
+Eliminating $\mathbf{H}$ gives the Helmholtz equation used only as a check,
+\begin{equation}
+\partial_x^2 E_z + \partial_y^2 E_z + \omega^2\mu\varepsilon E_z = j\omega\mu J_z.
+\label{eq:helmholtz-tm}
+\end{equation}
+The code never forms this scalar operator when $\mu$ varies from face to face.
+It keeps the curls.
+
+\paragraph{TEz.}
+The unknowns are $H_z$, $E_x$, and $E_y$:
+\begin{align}
+\partial_x E_y - \partial_y E_x + j\omega\mu H_z &= 0, \label{eq:te-hz}\\
+\partial_y H_z - j\omega\varepsilon E_x &= J_x, \label{eq:te-ex}\\
+-\partial_x H_z - j\omega\varepsilon E_y &= J_y. \label{eq:te-ey}
+\end{align}
+
+\subsection{Constitutive law}
+\label{sec:constitutive}
+
+A volumetric law returns $\varepsilon$, $\mu$, and $\sigma$ at the Yee location
+of each component. The milestone-1 law is uniform and isotropic: one positive
+$\varepsilon$, one positive $\mu$, and one $\sigma\ge 0$. The call also accepts
+a frequency and an external state (a temperature map, a stress map, or
+anything the caller has already computed). The uniform law ignores both. A
+later law may return a different value at every sample, or a complex
+$\varepsilon(\omega)$ for FDFD. The time stepper requires real $\varepsilon$
+and $\sigma$; a dispersive time-domain medium will add auxiliary variables
+rather than a complex coefficient inside the leapfrog.
+
+Surface models are not constitutive samples. PEC, a resistive sheet, and a
+GSTC sheet modify curls or replace rows. They are not encoded by setting
+$\varepsilon$ to zero or to infinity.
+
+\subsection{Boundaries in the continuous problem}
+\label{sec:continuous-bc}
+
+On a PEC wall the tangential electric field is zero. On a PMC wall the
+tangential magnetic field is zero. A periodic wall identifies the two opposite
+faces, optionally with a Bloch phase $e^{-j\mathbf{k}_B\cdot\mathbf{L}}$ in a
+later slice; milestone~1 uses a phase of one. An open boundary is a PML,
+written in Sec.~\ref{sec:pml} and not coded yet.
+
+\section{Discretization}
+\label{sec:discretization}
+
+\subsection{Cells, axes, and shapes}
+\label{sec:shapes}
+
+The grid has $n_x$ by $n_y$ cells of size $\Delta x$ and $\Delta y$. The domain
+is $[0,a]\times[0,b]$ with $a=n_x\Delta x$ and $b=n_y\Delta y$. Stored arrays
+use index $[i,j]$ with axis~0 along $x$.
+
+Table~\ref{tab:shapes} is the layout the drivers assume. PEC keeps the
+boundary electric samples in the array and sets them to zero. Periodic
+identification drops the duplicate far side, so every stored sample is an
+unknown and every difference wraps.
+
+\begin{table}[ht]
+\centering
+\caption{Sample locations. A PEC count of $n{+}1$ includes both boundaries. A
+periodic count of $n$ is one period.}
+\label{tab:shapes}
+\begin{tabular}{@{}llll@{}}
+\toprule
+Field & Location & PEC shape & Periodic shape\\
+\midrule
+$E_z$ & $(i\Delta x,\, j\Delta y)$ & $(n_x{+}1,n_y{+}1)$ & $(n_x,n_y)$\\
+$H_x$ & $(i\Delta x,\, (j+\tfrac12)\Delta y)$ & $(n_x{+}1,n_y)$ & $(n_x,n_y)$\\
+$H_y$ & $((i+\tfrac12)\Delta x,\, j\Delta y)$ & $(n_x,n_y{+}1)$ & $(n_x,n_y)$\\
+\midrule
+$H_z$ & $((i+\tfrac12)\Delta x,\, (j+\tfrac12)\Delta y)$ & $(n_x,n_y)$ & $(n_x,n_y)$\\
+$E_x$ & $((i+\tfrac12)\Delta x,\, j\Delta y)$ & $(n_x,n_y{+}1)$ & $(n_x,n_y)$\\
+$E_y$ & $(i\Delta x,\, (j+\tfrac12)\Delta y)$ & $(n_x{+}1,n_y)$ & $(n_x,n_y)$\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Centered differences of a linear field are exact on this stencil. That is the
+sign test for the curls: if $E_z=\alpha x+\beta y$, then the discrete
+$\partial_y E_z$ equals $\beta$ and $-\partial_x E_z$ equals $-\alpha$.
+
+\subsection{Discrete curls}
+\label{sec:curls}
+
+Collect the free electric samples in a vector $\mathrm{e}$ and the magnetic
+samples that the curls touch in a vector $\mathrm{h}$. The two real sparse
+matrices are defined so that they match~\eqref{eq:faraday} and~\eqref{eq:ampere}
+term by term:
+\begin{align}
+\mathrm{curl}_E\,\mathrm{e} + j\omega\,\mathrm{diag}(\mu_H)\,\mathrm{h} &= 0,
+\label{eq:curl-e}\\
+\mathrm{curl}_H\,\mathrm{h} - j\omega\,\mathrm{diag}(\varepsilon_E)\,\mathrm{e}
+&= \mathrm{j}.
+\label{eq:curl-h}
+\end{align}
+For TMz, $\mathrm{curl}_E$ stacks $(\partial_y E_z,\,-\partial_x E_z)$ and
+$\mathrm{curl}_H$ is $\partial_x H_y-\partial_y H_x$. For TEz,
+$\mathrm{curl}_E$ is $\partial_x E_y-\partial_y E_x$ and $\mathrm{curl}_H$
+stacks $(\partial_y H_z,\,-\partial_x H_z)$.
+
+On every grid in Table~\ref{tab:shapes} the two matrices are transposes,
+\begin{equation}
+\mathrm{curl}_H = \mathrm{curl}_E^{\mathsf T}.
+\label{eq:adjoint}
+\end{equation}
+The boundary terms that integration by parts would leave are absent because
+PEC electric samples are not unknowns, and periodic faces cancel. The product
+$\mathrm{curl}_H\,\mathrm{diag}(\mu^{-1})\,\mathrm{curl}_E$ is therefore
+symmetric.
+
+PEC degrees of freedom, TMz:
+$E_z$ for $i=1,\ldots,n_x-1$ and $j=1,\ldots,n_y-1$;
+$H_x$ for $i=1,\ldots,n_x-1$ and $j=0,\ldots,n_y-1$;
+$H_y$ for $i=0,\ldots,n_x-1$ and $j=1,\ldots,n_y-1$.
+The magnetic samples on the outer PEC edges do not enter $\mathrm{curl}_H$ at
+a free $E_z$. TEz keeps every $H_z$, drops $E_x$ on $y=0$ and $y=b$, and drops
+$E_y$ on $x=0$ and $x=a$.
+
+TEz curl-curl on tangential $\mathbf{E}$ has a kernel: any discrete gradient of
+a nodal potential that is constant on the PEC boundary has zero circulation.
+Those eigenvalues are zero. They are not cavity modes. The physical spectrum
+is the positive one.
+
+\subsection{Leapfrog update}
+\label{sec:leapfrog}
+
+Store $\mathbf{E}$ at integer steps and $\mathbf{H}$ at the half-step before
+it. One step produces $\mathbf{H}^{n+1/2}$ from $\mathbf{E}^n$, then
+$\mathbf{E}^{n+1}$ from $\mathbf{H}^{n+1/2}$. For TMz, with the curls of
+Sec.~\ref{sec:curls},
+\begin{align}
+H_x &\leftarrow H_x - \frac{\Delta t}{\mu_x}\,\partial_y E_z, \label{eq:upd-hx}\\
+H_y &\leftarrow H_y + \frac{\Delta t}{\mu_y}\,\partial_x E_z, \label{eq:upd-hy}\\
+E_z &\leftarrow C_a E_z + C_b\,(\partial_x H_y - \partial_y H_x). \label{eq:upd-ez}
+\end{align}
+The coefficients are evaluated at the $E_z$ samples,
+\begin{equation}
+C_a = \frac{1-\sigma\Delta t/(2\varepsilon)}{1+\sigma\Delta t/(2\varepsilon)},
+\qquad
+C_b = \frac{\Delta t/\varepsilon}{1+\sigma\Delta t/(2\varepsilon)}.
+\label{eq:ca-cb}
+\end{equation}
+When $\sigma=0$ they are $C_a=1$ and $C_b=\Delta t/\varepsilon$. The same pair
+is used on $E_x$ and $E_y$ in TEz, and the magnetic update is
+\begin{equation}
+H_z \leftarrow H_z - \frac{\Delta t}{\mu_z}(\partial_x E_y - \partial_y E_x).
+\label{eq:upd-hz}
+\end{equation}
+After the electric update, PEC edges are set back to zero.
+
+No matrix is stored. The array curls are the same stencil as
+$\mathrm{curl}_E$ and $\mathrm{curl}_H$, including the wrap on a periodic grid.
+
+\subsection{Material sampling and staircase geometry}
+\label{sec:sampling}
+
+$\varepsilon$ and $\sigma$ live on electric samples. $\mu$ lives on magnetic
+samples. A uniform law fills those arrays with constants. A staircase solid
+fills each sample from the coordinate of that sample, so an electric node and
+a magnetic node on the same cell can lie on opposite sides of a face. A slab
+$y_0\le y<y_1$ is half-open, and a disk $(x-x_c)^2+(y-y_c)^2\le R^2$ is
+closed. Later regions overwrite earlier ones. There is no volume-fraction
+weight. The assignment is
+\begin{equation}
+(x,y)\in\mathcal{R}
+\quad\Longrightarrow\quad
+(\varepsilon,\mu,\sigma)(x,y)=(\varepsilon,\mu,\sigma)_{\mathcal{R}},
+\label{eq:staircase}
+\end{equation}
+The stepper is unchanged, because it already reads one coefficient per sample.
+Conformal cuts and sub-cell dielectric smoothing are not part of this scheme.
+
+Tensor $\bar\varepsilon$ is out of scope until the scalar isotropic tests
+match the analytic formulas. Off-diagonal samples would sit at locations the
+present curls do not read.
+
+\subsection{Bulk Debye and Lorentz media}
+\label{sec:dispersion-bulk}
+
+A dispersive law returns a complex $\varepsilon(\omega)$ to FDFD and a real
+instantaneous permittivity $\varepsilon_\infty$ to the leapfrog. One electric
+Debye pole and one electric Lorentz pole are enough for this slice. With the
+$e^{j\omega t}$ convention,
+\begin{align}
+\varepsilon(\omega)
+&= \varepsilon_\infty + \frac{\varepsilon_0\Delta\varepsilon}{1+j\omega\tau},
+\label{eq:debye}\\
+\tau\partial_t P + P &= \varepsilon_0\Delta\varepsilon\, E,
+\label{eq:debye-ode}\\
+\varepsilon(\omega)
+&= \varepsilon_\infty
++ \frac{\varepsilon_0\omega_p^2}{\omega_0^2-\omega^2+j\gamma\omega},
+\label{eq:lorentz-bulk}\\
+\partial_t^2 P + \gamma\partial_t P + \omega_0^2 P
+&= \varepsilon_0\omega_p^2 E.
+\label{eq:lorentz-ode}
+\end{align}
+Magnetic dispersion is not in this slice. These volume auxiliaries are
+independent of the surface oscillators~\eqref{eq:lorentz-e}
+and~\eqref{eq:lorentz-m}.
+
+$J_p=\partial_t P$ is added to the impressed current. The coefficients
+$C_a$ and $C_b$ stay~\eqref{eq:ca-cb}, built on $\varepsilon_\infty$ and
+$\sigma$, and the electric update becomes
+\begin{equation}
+E \leftarrow C_a E + C_b\,(\nabla\times H - J_p - J).
+\label{eq:jp}
+\end{equation}
+$J=0$ and $J_p=0$ is~\eqref{eq:upd-ez}. Lorentz stores $P$ at integer steps,
+advances it explicitly from $E^n$, and sets $J_p^{n+1/2}=(P^{n+1}-P^n)/\Delta t$.
+Debye uses the centered average $E^{n+1/2}=(E^{n+1}+E^n)/2$, which couples
+$P^{n+1}$ to $E^{n+1}$ and is solved one sample at a time. TEz carries one
+auxiliary on $E_x$ and one on $E_y$.
+
+\section{Stability, dispersion, and domain closure}
+\label{sec:stability}
+
+\subsection{CFL limit}
+\label{sec:cfl}
+
+On a uniform 2D Yee grid the leapfrog is stable for
+\begin{equation}
+\Delta t \le \Delta t_{\mathrm{CFL}}
+= \frac{1}{c\sqrt{\Delta x^{-2}+\Delta y^{-2}}}.
+\label{eq:cfl}
+\end{equation}
+The bound is sharp for the grid mode $k_x=\pi/\Delta x$, $k_y=\pi/\Delta y$.
+A run at $0.99\,\Delta t_{\mathrm{CFL}}$ must stay bounded. A run at
+$1.01\,\Delta t_{\mathrm{CFL}}$ must grow.
+
+\subsection{Semi-discrete and fully discrete frequencies}
+\label{sec:dispersion}
+
+With continuous time and Yee differences, a mode $k_x$, $k_y$ oscillates at
+\begin{equation}
+\left(\frac{\omega_0}{c}\right)^2
+=
+\left(\frac{2\sin(k_x\Delta x/2)}{\Delta x}\right)^2
++
+\left(\frac{2\sin(k_y\Delta y/2)}{\Delta y}\right)^2.
+\label{eq:semi}
+\end{equation}
+The leapfrog moves that frequency to the root of
+\begin{equation}
+\left(\frac{\sin(\omega\Delta t/2)}{c\,\Delta t}\right)^2
+=
+\left(\frac{\sin(k_x\Delta x/2)}{\Delta x}\right)^2
++
+\left(\frac{\sin(k_y\Delta y/2)}{\Delta y}\right)^2,
+\label{eq:discrete}
+\end{equation}
+provided the right-hand side is at most $(c\Delta t)^{-2}$. Because
+$\arcsin z>z$ on $(0,1)$, this $\omega$ lies slightly above $\omega_0$.
+FDFD, having no time difference, must reproduce $\omega_0$.
+
+A rectangular PEC cavity of size $a\times b$ has $k_x=m\pi/a$ and
+$k_y=n\pi/b$. TMz needs $m\ge 1$ and $n\ge 1$, because $E_z$ vanishes on the
+whole boundary. TEz also allows $m=0$ or $n=0$, but not both. The mode shapes
+consistent with the stencil are
+\begin{align}
+E_z &= \sin(m\pi x/a)\sin(n\pi y/b), \label{eq:mode-tm}\\
+H_z &= \cos(m\pi x/a)\cos(n\pi y/b). \label{eq:mode-te}
+\end{align}
+A pure spatial eigenmode sampled on three successive steps obeys the scalar
+leapfrog recurrence. Those three numbers determine $\omega$ without a
+Fourier transform.
+
+\subsection{Lossless invariant}
+\label{sec:invariant}
+
+$\mathbf{E}$ and $\mathbf{H}$ are never stored at the same time. The sum of
+their sample energies therefore oscillates by a noticeable fraction of itself
+near the CFL limit, even though the scheme is lossless. The quadratic form
+that the update conserves, when $\sigma=0$, is
+\begin{equation}
+W^n
+=
+\frac12\sum \varepsilon\,(E^n)^2\,\Delta x\Delta y
++
+\frac12\sum \mu\, H^{n+1/2} H^{n-1/2}\,\Delta x\Delta y,
+\label{eq:invariant}
+\end{equation}
+with the sums over the stored samples of each component. The derivation is the
+adjoint relation~\eqref{eq:adjoint}: the work done on $\mathbf{E}$ by
+$\mathrm{curl}_H\mathbf{H}$ cancels the work done on $\mathbf{H}$ by
+$\mathrm{curl}_E\mathbf{E}$. Conductivity removes the cancellation. Above the
+CFL limit $W^n$ can stay constant while the ordinary field energy grows,
+because $W^n$ is then indefinite. Boundedness is checked with $W^n$. Growth
+past the CFL limit is checked with the ordinary field energy.
+
+\subsection{PEC, PMC, and periodic walls}
+\label{sec:walls}
+
+PEC for TMz is $E_z=0$ on the outer node lines. PEC for TEz is $E_x=0$ on
+$y\in\{0,b\}$ and $E_y=0$ on $x\in\{0,a\}$. PMC is the dual statement,
+tangential $\mathbf{H}=0$, which is a Neumann condition on the remaining
+field. PMC is part of the surface stack and is not in the milestone-1
+unknown set.
+
+Periodic differences replace $i-1$ at $i=0$ by $i=n_x-1$, and likewise in $y$.
+A Bloch phase multiplies the wrapped sample by $e^{\pm j k_{B,x} a}$. The
+phase is unity until the metasurface unit-cell slice.
+
+\subsection{PML}
+\label{sec:pml}
+
+An open domain is closed by a complex stretch of the normal coordinate,
+following the convolutional PML. In the frequency domain, for each axis
+$w\in\{x,y\}$,
+\begin{equation}
+s_w = \kappa_w + \frac{\sigma_w}{\alpha_w + j\omega\varepsilon_0},
+\label{eq:stretch}
+\end{equation}
+and every $\partial_w$ in the curls is replaced by $s_w^{-1}\partial_w$. The
+reciprocal that the auxiliary equation integrates is
+\begin{equation}
+\frac{1}{s_w}
+=
+\frac{1}{\kappa_w}
+-
+\frac{\sigma_w/(\kappa_w^2\varepsilon_0)}
+{j\omega + \alpha_w/\varepsilon_0 + \sigma_w/(\kappa_w\varepsilon_0)}.
+\label{eq:stretch-inv}
+\end{equation}
+Inside a PML slab of thickness $d$, with $\rho$ the depth measured from the
+inner face and $m$ typically 3 or 4,
+\begin{equation}
+\sigma_w(\rho) = \sigma_{\max}(\rho/d)^m,
+\qquad
+\sigma_{\max} = -\frac{(m+1)\ln R(0)}{2\eta_0 d},
+\label{eq:sigma-max}
+\end{equation}
+with a target reflection $R(0)$ of order $10^{-6}$ to $10^{-8}$. $\kappa_w$
+grows from 1 at the inner face to a modest $\kappa_{\max}$, and $\alpha_w$
+falls from a small positive value at the inner face to zero at the outer PEC
+backing. The time-domain scheme adds one auxiliary per stretched derivative
+and integrates~\eqref{eq:stretch-inv} with the same $\Delta t$ as the
+leapfrog. This section is the specification for that slice. The milestone-1
+stepper has no PML.
+
+\section{Linear algebra and thin sheets}
+\label{sec:algebra}
+
+\subsection{Driven FDFD system}
+\label{sec:fdfd}
+
+Eliminating $\mathrm{h}$ from~\eqref{eq:curl-e} and~\eqref{eq:curl-h} gives
+the system that is factored,
+\begin{equation}
+\mathrm{curl}_H\,\mathrm{diag}\!\left(\frac{1}{j\omega\mu_H}\right)\mathrm{curl}_E\,\mathrm{e}
++ j\omega\,\mathrm{diag}(\varepsilon_E)\,\mathrm{e}
+= -\mathrm{j}.
+\label{eq:fdfd}
+\end{equation}
+The unknown is the free electric vector. PEC rows are omitted rather than
+penalized. The matrix is complex symmetric when $\varepsilon$ and $\mu$ are
+scalar, and it is stored sparse. Milestone~1 solves it with a sparse direct
+factorization. Two-dimensional grids of the size used in the tests factor in
+negligible time. Iterative solves (GMRES or BiCGSTAB, with a preconditioner)
+wait until a grid is large enough that the factor is the expensive part.
+
+At a fixed real $\omega$ away from the cavity spectrum the matrix is
+nonsingular. A manufactured solution builds $\mathrm{j}$ by applying the
+left-hand side to a chosen $\mathrm{e}$ and asks the solver for that
+$\mathrm{e}$ back.
+
+\subsection{Cavity eigenproblem}
+\label{sec:eigen}
+
+For lossless media and $\mathrm{j}=0$, multiplying~\eqref{eq:fdfd} through by
+$j\omega$ produces the generalized eigenproblem
+\begin{equation}
+K\mathrm{e} = \omega^2 M\mathrm{e},
+\qquad
+K = \mathrm{curl}_H\,\mathrm{diag}(\mu_H^{-1})\,\mathrm{curl}_E,
+\qquad
+M = \mathrm{diag}(\varepsilon_E).
+\label{eq:eigen}
+\end{equation}
+$K$ is real symmetric and, on a TMz PEC cavity, positive definite. On a TEz
+PEC cavity it is positive semi-definite with the gradient kernel of
+Sec.~\ref{sec:curls}. The positive eigenvalues are the semi-discrete
+frequencies~\eqref{eq:semi}. Conductivity does not enter $K$ and $M$. A
+complex permittivity belongs in the driven system~\eqref{eq:fdfd}, not in
+this real eigenproblem.
+
+\subsection{Resistive sheet}
+\label{sec:impedance}
+
+A zero-thickness electric sheet with surface impedance $Z_s$ (ohms per
+square) carries
+\begin{equation}
+\hat{\mathbf{n}}\times(\mathbf{H}^+-\mathbf{H}^-) = \mathbf{E}_{\mathrm{av}}/Z_s.
+\label{eq:zs}
+\end{equation}
+The normal points from the $-$ side to the $+$ side. For a sheet of normal
+$\hat{\mathbf{y}}$ in TMz this is $-(H_x^+-H_x^-)=E_z/Z_s$.
+
+The same sheet is the pure-electric GSTC of Sec.~\ref{sec:gstc} with
+\begin{equation}
+\chi_{ee} = \frac{\eta_0}{j k Z_s} = \frac{1}{j\omega\varepsilon_0 Z_s},
+\label{eq:chi-from-z}
+\end{equation}
+and $\chi_{mm}=0$. MaxwellMOM's \texttt{chi\_ee\_from\_Zs} is this map. In the
+time domain a real $Z_s$ is a shunt conductance, not a constant
+susceptibility: $J_z=\sigma_s E_z$ with $\sigma_s=1/Z_s$. Placing that current
+in the Ampere cell of height $\Delta y$ that contains the sheet adds
+\begin{equation}
+\sigma_{\mathrm{eff}} = \sigma + \frac{1}{Z_s\Delta y}
+\label{eq:sigma-sheet}
+\end{equation}
+to the $C_a$, $C_b$ formula~\eqref{eq:ca-cb} on the sheet's electric samples.
+That is the milestone-4 update. It is the $\chi_{mm}=0$ reduction of the
+symmetric cell, specialized to $\chi_{ee}\propto 1/(j\omega)$.
+
+\subsection{Complex permittivity and a Dirichlet trace}
+\label{sec:dirichlet}
+
+When $\varepsilon$ and $\sigma$ are real, the diagonal of~\eqref{eq:fdfd} uses
+\begin{equation}
+\varepsilon_{\mathrm{FDFD}} = \varepsilon + \frac{\sigma}{j\omega}.
+\label{eq:eps-sigma}
+\end{equation}
+A law that returns a complex $\varepsilon(\omega)$ has already included its
+loss. That array replaces~\eqref{eq:eps-sigma} and the accompanying $\sigma$
+is zero, so a pole is not counted twice. The real eigenproblem~\eqref{eq:eigen}
+still requires real positive $\varepsilon$ and $\mu$ and $\sigma=0$.
+
+PEC electric samples stay out of the unknown vector. A non-zero trace $e_D$,
+equal to the prescribed boundary values and zero on the free samples, moves
+onto the right-hand side,
+\begin{equation}
+A_{ff}\,\mathrm{e}_f = -\mathrm{j} - (A\mathrm{e}_D)_f.
+\label{eq:dirichlet}
+\end{equation}
+The free rows of $A\mathrm{e}_D$ are the array form of the left-hand side
+of~\eqref{eq:fdfd}. A zero trace is the milestone-1 solve. This is how the
+slab and cylinder comparisons are posed. It is not a PML.
+
+\section{Validation}
+\label{sec:validation}
+
+Milestone~1 is a numerical check that the curls, the leapfrog, and the sparse
+system implement Secs.~\ref{sec:discretization} and~\ref{sec:stability}. The
+acceptance tests and the bars they use are:
+
+\begin{center}
+\small
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{5.0cm}>{\raggedright\arraybackslash}p{3.5cm}>{\raggedright\arraybackslash}p{6.2cm}@{}}
+\toprule
+Check & Bar & What is compared\\
+\midrule
+Linear TMz and TEz curls & $10^{-12}$ absolute & Centered differences of a linear field\\
+$\mathrm{curl}_H=\mathrm{curl}_E^{\mathsf T}$ & $10^{-12}$ absolute & All four grids in Table~\ref{tab:shapes}\\
+Matrix versus array curl & $10^{-12}$ relative & Same four grids, PEC boundaries held at zero\\
+TMz cavity $(1,1)$ & $10^{-10}$ relative & Smallest FDFD eigenvalue versus~\eqref{eq:semi}\\
+TEz cavities $(1,0)$ and $(1,1)$ & $10^{-10}$ relative & Positive FDFD eigenvalues versus~\eqref{eq:semi}\\
+Manufactured FDFD solve & $10^{-10}$ relative & Recovered $\mathrm{e}$ on TMz and TEz\\
+Leapfrog invariant at $0.99\,\Delta t_{\mathrm{CFL}}$ & 1 percent & $W^n$ over $2\cdot 10^3$ steps, random TMz data\\
+Field energy at $1.01\,\Delta t_{\mathrm{CFL}}$ & growth past $10\times$ & Same data, ordinary sample energy\\
+TMz and TEz modal $\omega$ & $10^{-6}$ relative & Three leapfrog samples versus~\eqref{eq:discrete}\\
+Periodic standing wave $(k_x,k_y)=(2\pi/a,\,0)$ & $10^{-6}$ relative & Same recurrence versus~\eqref{eq:discrete}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The modal and standing-wave bars in the project plan were $10^{-3}$, which is
+a fit tolerance. A pure eigenmode has no fit error, so the tests use
+$10^{-6}$.
+
+Milestone~2 adds the volumetric checks. The scattering rows compare the Yee
+solution, with the trace~\eqref{eq:dirichlet} taken from the formulas below,
+to those formulas. The gap is dispersion, and for the disk the staircase.
+A slab face used in a convergence pair is kept off the electric nodes of
+both grids, so~\eqref{eq:staircase} does not assign the face to a sample.
+The comparison wavelength is kept off the TEz eigenfrequencies of that
+closed box: $\lambda=40\Delta$ on the $8\times 80$ domain is one of them,
+and the Dirichlet problem is then singular.
+
+\begin{center}
+\small
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{5.0cm}>{\raggedright\arraybackslash}p{3.5cm}>{\raggedright\arraybackslash}p{6.2cm}@{}}
+\toprule
+Check & Bar & What is compared\\
+\midrule
+Fresnel face continuity & $10^{-12}$ absolute & Tangential $E$ and $H$, both polarizations\\
+Mie cylinder continuity & $10^{-8}$ absolute & Tangential field and derivative at $\rho=a$\\
+PEC cylinder coefficient & $10^{-12}$ relative & $a_n$ against $-(-j)^n J_n/H_n^{(2)}$\\
+Manufactured $\sigma>0$ and $\varepsilon(\mathbf{r})$ & $10^{-10}$ relative & Recovered $\mathrm{e}$, both polarizations\\
+Uniform $\varepsilon_r=4$ cavity & $10^{-10}$ / $10^{-6}$ & FDFD versus~\eqref{eq:semi}; leapfrog versus~\eqref{eq:discrete}\\
+Slab-loaded TMz cavity & $10^{-2}$ and $10^{-6}$ & Continuous root, then leapfrog against that $\omega_0$\\
+Lossless staircase invariant & 1 percent & $W^n$ over 500 steps at half the CFL step\\
+Fresnel slab, both polarizations & $2\cdot 10^{-2}$ relative & Free samples; halving $\Delta$ drops the error by $2.5\times$\\
+Dielectric cylinder, both polarizations & $2\cdot 10^{-2}$ relative & Samples $2\Delta$ off the circle and the wall\\
+Debye and Lorentz, one period & $3\cdot 10^{-3}$ relative & Leapfrog against the complex-$\varepsilon$ phasor\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Normal-incidence Fresnel slab}
+\label{sec:fresnel}
+
+A slab $y_1\le y\le y_2$ of thickness $d$, relative permittivity
+$\varepsilon_r$, and $\mu=\mu_0$ sits in vacuum. The incident wave travels
+toward $+y$ and equals $1$ at the front face. With $n=\sqrt{\varepsilon_r}$,
+$k=\omega/c$, and $\delta=nkd$, a single-interface reflection $r$ produces
+\begin{equation}
+R = \frac{r(1-e^{-2j\delta})}{1-r^2 e^{-2j\delta}},
+\qquad
+\tau = \frac{(1-r^2)\,e^{-j\delta}}{1-r^2 e^{-2j\delta}}.
+\label{eq:fresnel-R}
+\end{equation}
+For TMz the unknown is $E_z$ and $r=(1-n)/(1+n)$. The field is
+\begin{equation}
+E_z(y) =
+\begin{cases}
+e^{-jk(y-y_1)} + R\, e^{jk(y-y_1)}, & y\le y_1,\\[0.3em]
+A\, e^{-jnk(y-y_1)} + C\, e^{jnk(y-y_1)}, & y_1\le y\le y_2,\\[0.3em]
+\tau\, e^{-jk(y-y_2)}, & y\ge y_2,
+\end{cases}
+\label{eq:fresnel-field}
+\end{equation}
+with $A=\tfrac12\big(1+R+(1-R)/n\big)$ and
+$C=\tfrac12\big(1+R-(1-R)/n\big)$. Then
+$H_x=-\partial_y E_z/(j\omega\mu_0)$: a forward vacuum wave has
+$H_x=E_z/\eta$ and a backward wave has $H_x=-E_z/\eta$, where
+$\eta=\sqrt{\mu_0/\varepsilon_0}$. Inside, the forward part of $H_x$ carries
+an extra factor of $n$.
+
+TEz is a different scalar. Tangential $H$ reflects with
+$r_H=(n-1)/(n+1)=-r$, and~\eqref{eq:fresnel-R} is evaluated at $r_H$.
+Transmission depends on $r^2$, so $\tau$ is unchanged and $R_H=-R$.
+Interior amplitudes satisfy $A_H+C_H=1+R_H$ and $A_H-C_H=n(1-R_H)$,
+\begin{equation}
+H_z(y) =
+\begin{cases}
+e^{-jk(y-y_1)} + R_H\, e^{jk(y-y_1)}, & y\le y_1,\\[0.3em]
+A_H\, e^{-jnk(y-y_1)} + C_H\, e^{jnk(y-y_1)}, & y_1\le y\le y_2,\\[0.3em]
+\tau\, e^{-jk(y-y_2)}, & y\ge y_2,
+\end{cases}
+\label{eq:fresnel-te}
+\end{equation}
+with $A_H=\tfrac12\big(1+R_H+n(1-R_H)\big)$ and
+$C_H=\tfrac12\big(1+R_H-n(1-R_H)\big)$. The lift uses
+$E_x=\partial_y H_z/(j\omega\varepsilon)$ and $E_y=0$. Outside, a forward
+wave has $E_x=-\eta H_z$; inside, that factor is $\eta/n$.
+When $\varepsilon_r=1$, both reflections vanish and
+$\tau=e^{-jkd}$, so each field equals the incident wave. Continuity of
+tangential $E$ and $H$ at both faces is the check on these closed forms.
+
+\subsection{Dielectric cylinder}
+\label{sec:mie2d}
+
+The outgoing cylindrical wave is $H_n^{(2)}$, the same convention as
+MaxwellMOM's two-dimensional PEC cylinder. The incident field
+$e^{-jkx}$ has the Jacobi--Anger expansion
+\begin{equation}
+e^{-jkx} = \sum_{n=-\infty}^{\infty} (-j)^n J_n(k\rho)\, e^{jn\varphi}.
+\label{eq:mie-inc}
+\end{equation}
+Our TMz unknown is $E_z$. For a non-magnetic cylinder of radius $a$ and
+index $m=\sqrt{\varepsilon_r}$, with $\alpha=ka$ and $\beta=mka$,
+\begin{equation}
+a_n = (-j)^n
+\frac{m J_n'(\beta)\, J_n(\alpha) - J_n(\beta)\, J_n'(\alpha)}
+{J_n(\beta)\, H_n^{(2)\prime}(\alpha) - m J_n'(\beta)\, H_n^{(2)}(\alpha)}.
+\label{eq:mie-tm}
+\end{equation}
+The interior coefficient follows from continuity of $E_z$ at $\rho=a$.
+Outside, the scattered field is $a_n H_n^{(2)}(k\rho)\, e^{jn\varphi}$.
+Inside, it is $b_n J_n(mk\rho)\, e^{jn\varphi}$.
+
+TEz is the $H_z$ problem. Tangential $E$ brings $1/\varepsilon$, so the
+contrast multiplies the undifferentiated interior Bessel function,
+\begin{equation}
+a_n = (-j)^n
+\frac{m J_n(\beta)\, J_n'(\alpha) - J_n'(\beta)\, J_n(\alpha)}
+{J_n'(\beta)\, H_n^{(2)}(\alpha) - m J_n(\beta)\, H_n^{(2)\prime}(\alpha)}.
+\label{eq:mie-te}
+\end{equation}
+The PEC reduction used as a regression is the separate coefficient
+$a_n=-(-j)^n J_n(\alpha)/H_n^{(2)}(\alpha)$, not the limit
+$\varepsilon_r\to\infty$ of~\eqref{eq:mie-tm}.
+
+Later slices add comparisons that this note already fixes the formulas for,
+and that the code does not yet run:
+
+\begin{itemize}
+\item an open PEC or dielectric cylinder against Mie once the PML of
+Sec.~\ref{sec:pml} is in;
+\item a 3D rectangular cavity, then a sphere against the Mie series, at a
+size~\eqref{eq:fdfd} can still factor;
+\item a resistive sheet against~\eqref{eq:zs} and against one MaxwellMOM
+impedance run of the same case;
+\item a uniform GSTC sheet against the $R,T$ formulas of
+Sec.~\ref{sec:rt};
+\item a dipole, a Gaussian beam, a near-to-far integral, and a Bloch cell.
+\end{itemize}
+
+Prescribed external maps are checked by confirming that the samples the
+stepper reads are the samples the law was given. They are not a coupled
+thermal or mechanical solve.
+
+\section{GSTC metasurfaces}
+\label{sec:gstc}
+
+\subsection{Jump conditions}
+\label{sec:jumps}
+
+A zero-thickness sheet of normal $\hat{\mathbf{n}}$, pointing from the $-$
+side to the $+$ side, replaces the tangential continuity conditions by
+\begin{align}
+\hat{\mathbf{n}}\times(\mathbf{H}^+-\mathbf{H}^-) &= \partial_t\mathbf{P}_s,
+\label{eq:gstc-h}\\
+(\mathbf{E}^+-\mathbf{E}^-)\times\hat{\mathbf{n}} &= \mu_0\,\partial_t\mathbf{M}_s.
+\label{eq:gstc-e}
+\end{align}
+For a monoanisotropic sheet the surface polarizations are
+\begin{equation}
+\mathbf{P}_s = \varepsilon_0\,\chi_{ee}\cdot\mathbf{E}_{\mathrm{av}},
+\qquad
+\mathbf{M}_s = \chi_{mm}\cdot\mathbf{H}_{\mathrm{av}},
+\label{eq:pol}
+\end{equation}
+with the average of the two one-sided tangential fields. In the frequency
+domain $\partial_t$ is $j\omega$. These are the same jumps as in the symmetric
+Yee-cell scheme of Smy, Stewart, and Gupta (arXiv:1706.10136) and the same
+$e^{j\omega t}$ normalization as MaxwellMOM's \texttt{rt\_from\_chi}: there
+$J=j\omega\varepsilon_0\chi_{ee}E_{\mathrm{av}}$ and
+$M=j\omega\mu_0\chi_{mm}H_{\mathrm{av}}$.
+
+For TMz and a sheet of normal $\hat{\mathbf{y}}$, \eqref{eq:gstc-h}
+and~\eqref{eq:gstc-e} become
+\begin{align}
+-(H_x^+ - H_x^-) &= \partial_t P_z, \label{eq:jump-hx}\\
+E_z^+ - E_z^- &= -\mu_0\,\partial_t M_x. \label{eq:jump-ez}
+\end{align}
+$H_y$ is the normal field. It is not split.
+
+Bianisotropic coupling, when it is added, extends~\eqref{eq:pol} to
+\begin{equation}
+\mathbf{P}_s = \varepsilon_0\chi_{ee}\cdot\mathbf{E}_{\mathrm{av}}
++ c_0^{-1}\chi_{em}\cdot\mathbf{H}_{\mathrm{av}},
+\qquad
+\mathbf{M}_s = \chi_{mm}\cdot\mathbf{H}_{\mathrm{av}}
++ \eta_0^{-1}\chi_{me}\cdot\mathbf{E}_{\mathrm{av}}.
+\label{eq:bianiso}
+\end{equation}
+The reflective lock used in MaxwellMOM is a particular $\chi_{em}$ inside this
+extension. It is not part of the first sheet implementation.
+
+\subsection{Reflection and transmission}
+\label{sec:rt}
+
+Take a uniform sheet at $y=0$, host medium $(\varepsilon,\mu)$ on both sides,
+and a TMz wave at angle $\theta$ from the normal. The reflected and
+transmitted amplitudes are defined by $E_z^+=T E_0$ and $E_z^-=E_0(1+R)$ at
+the sheet, with the incident wave coming from $y<0$. Substituting the plane
+waves into~\eqref{eq:jump-hx} and~\eqref{eq:jump-ez}, with constant
+susceptibilities, gives
+\begin{equation}
+R+T = \frac{1-\tilde\alpha}{1+\tilde\alpha},
+\qquad
+T-R = \frac{1-\tilde\beta}{1+\tilde\beta},
+\label{eq:rt-system}
+\end{equation}
+where $\alpha_0 = jk\chi_{ee}/2$, $\beta_0 = jk\chi_{mm}/2$, $k=\omega/c$, and
+\begin{equation}
+\tilde\alpha = \alpha_0/\cos\theta,
+\qquad
+\tilde\beta = \beta_0\cos\theta.
+\label{eq:te-angle}
+\end{equation}
+Hence
+\begin{align}
+R &= \frac12\left(
+\frac{1-\tilde\alpha}{1+\tilde\alpha}
+-
+\frac{1-\tilde\beta}{1+\tilde\beta}
+\right), \label{eq:R}\\
+T &= \frac12\left(
+\frac{1-\tilde\alpha}{1+\tilde\alpha}
++
+\frac{1-\tilde\beta}{1+\tilde\beta}
+\right). \label{eq:T}
+\end{align}
+At $\theta=0$ the tildes drop off and~\eqref{eq:R}--\eqref{eq:T} are
+MaxwellMOM's normal-incidence formula. TMz with the sheet normal
+$\hat{\mathbf{y}}$ and the plane of incidence the $xy$-plane is $s$
+polarization, which that code calls TE.
+
+TEz on the same sheet is $p$ polarization (TM in MaxwellMOM). The cosines
+trade places,
+\begin{equation}
+\tilde\alpha = \alpha_0\cos\theta,
+\qquad
+\tilde\beta = \beta_0/\cos\theta,
+\label{eq:tm-angle}
+\end{equation}
+and $R$, $T$ keep the form~\eqref{eq:R}--\eqref{eq:T}. A normal magnetic
+susceptibility $\chi_{mm}^{nn}$ enters only the $s$/TE electric coefficient,
+\begin{equation}
+\tilde\alpha \leftarrow \tilde\alpha + \frac{jk\sin^2\theta\,\chi_{mm}^{nn}}{2\cos\theta},
+\label{eq:chi-nn}
+\end{equation}
+which is the correction MaxwellMOM applies for a flat sheet. The first coded
+sheet uses tangential $\chi_{ee}$ and $\chi_{mm}$ only. Equation~\eqref{eq:chi-nn}
+is the check for the normal-component extension.
+
+\subsection{Symmetric cell}
+\label{sec:symmetric-cell}
+
+The sheet sits halfway between electric nodes $E_z^-$ at index $j$ and
+$E_z^+$ at index $j+1$. The magnetic sample that would have occupied that face
+is replaced by a pair $H_x^-$, $H_x^+$ on the two sides of a zero-thickness
+cut. The averages and jumps in~\eqref{eq:jump-hx} and~\eqref{eq:jump-ez} use
+this pair and the two electric nodes. Bulk Faraday updates for $H_y$, and for
+the $H_x$ faces that are not the cut, are unchanged: their stencils do not
+cross the sheet.
+
+In the frequency domain the cut and the two Ampere cells that touch it are
+the local system
+\begin{align}
+H_x^+ - H_x^- + j\omega\varepsilon_0\chi_{ee}\frac{E_z^-+E_z^+}{2} &= 0,
+\label{eq:sc-h}\\
+E_z^+ - E_z^- + j\omega\mu_0\chi_{mm}\frac{H_x^-+H_x^+}{2} &= 0,
+\label{eq:sc-e}\\
+\frac{H_y|_{i,j}-H_y|_{i-1,j}}{\Delta x}
+- \frac{H_x^- - H_x^{\mathrm{below}}}{\Delta y}
+- j\omega\varepsilon E_z^- &= J_z^-,
+\label{eq:sc-amp-m}\\
+\frac{H_y|_{i,j+1}-H_y|_{i-1,j+1}}{\Delta x}
+- \frac{H_x^{\mathrm{above}} - H_x^+}{\Delta y}
+- j\omega\varepsilon E_z^+ &= J_z^+.
+\label{eq:sc-amp-p}
+\end{align}
+$H_x^{\mathrm{below}}$ and $H_x^{\mathrm{above}}$ are the ordinary Yee samples
+one cell off the cut. They are known from the bulk Faraday update when the
+cell is marched in time, and they are ordinary unknowns when the same rows are
+assembled into~\eqref{eq:fdfd}. Equations~\eqref{eq:sc-h} and~\eqref{eq:sc-e}
+replace the Faraday row that used to connect $E_z^-$ to $E_z^+$ across one
+$\Delta y$.
+
+For a non-dispersive real $\chi$ the time-domain statement is the same pair
+with $j\omega$ replaced by $\partial_t$ acting on $\mathbf{P}_s$ and
+$\mathbf{M}_s$. The four surface unknowns at a given step are coupled, so the
+cell is a $4\times 4$ (or a $2\times 2$ after eliminating $H_x^\pm$) solve,
+while the rest of the grid stays an explicit leapfrog. That local solve is
+the one described for the symmetric cell in arXiv:1706.10136.
+
+Two other placements are on record there. The asymmetric cell inserts the
+sheet between an existing $H$ sample and an existing $E$ sample and adds no
+nodes. The tight asymmetric cell adds one electric node on one side of the
+cut and one magnetic node on the other, and it is the placement that paper
+found to converge fastest. Milestone~5 codes~\eqref{eq:sc-h}--\eqref{eq:sc-amp-p}
+and checks $R$ and $T$ against~\eqref{eq:R} and~\eqref{eq:T}. If the half-cell
+offset of the symmetric averages dominates the error, the tight asymmetric
+cell replaces it without a change to the jump conditions.
+
+A constant real $\chi$, independent of $\omega$, is a convenient FDFD value
+and a legal reduction of~\eqref{eq:sc-h}--\eqref{eq:sc-e}. It is not a causal
+broadband model. Broadband FDTD uses a Lorentz oscillator for each resonance,
+\begin{align}
+\chi_{ee}(\omega) &= \frac{\omega_{ep}^2}{\omega_{e0}^2-\omega^2+j\alpha_e\omega},
+&
+\partial_t^2 P_z + \alpha_e\partial_t P_z + \omega_{e0}^2 P_z
+&= \varepsilon_0\omega_{ep}^2 E_{z,\mathrm{av}},
+\label{eq:lorentz-e}\\
+\chi_{mm}(\omega) &= \frac{\omega_{mp}^2}{\omega_{m0}^2-\omega^2+j\alpha_m\omega},
+&
+\partial_t^2 M_x + \alpha_m\partial_t M_x + \omega_{m0}^2 M_x
+&= \omega_{mp}^2 H_{x,\mathrm{av}}.
+\label{eq:lorentz-m}
+\end{align}
+Several poles superpose. The auxiliary variables are marched with the local
+cell solve. This is the dispersive extension, after the constant-$\chi$ sheet
+matches~\eqref{eq:R} and~\eqref{eq:T}.
+
+\subsection{What waits until the uniform sheet matches}
+\label{sec:gstc-later}
+
+Spatially varying $\chi(\mathbf{r})$ is a different $(4\times 4)$ on each cut
+face, with the same jumps. A Bloch cell multiplies the periodic wrap by
+$e^{-j\mathbf{k}_B\cdot\mathbf{L}}$ and reports $R$ and $T$ in the Floquet
+orders. Spatially dispersive $\chi(k_t)$ is a separate operator, checked
+against MaxwellMOM's multi-$k_t$ reductions, and it is not a local $4\times 4$.
+None of these three is coded before the uniform tangential sheet agrees with
+Sec.~\ref{sec:rt}.
+
+\section{Software architecture}
+\label{sec:architecture}
+
+\subsection{Modules}
+\label{sec:modules}
+
+The milestone-1 tree is the part of the layout that those tests exercise.
+Later boxes are named now so the drivers do not have to be renamed when the
+sheets arrive.
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Module & Responsibility\\
+\midrule
+\texttt{grid.yee2d} & Counts, spacings, polarization, boundary, shapes, coordinates\\
+\texttt{materials.volume} & Uniform, staircase, and mapped $\varepsilon,\mu,\sigma$\\
+\texttt{materials.dispersion} & Debye and Lorentz laws, auxiliaries $J_p$\\
+\texttt{operators.curl2d} & \texttt{curl\_e}, \texttt{curl\_h}, array curls, DOF order\\
+\texttt{drivers.fdtd2d} & Leapfrog step, $J$ and $J_p$, invariant~\eqref{eq:invariant}\\
+\texttt{drivers.fdfd2d} & System~\eqref{eq:fdfd}, Dirichlet lift, sparse solve\\
+\texttt{analytics.cavity2d} & Frequency~\eqref{eq:semi} and mode shapes~\eqref{eq:mode-tm}, \eqref{eq:mode-te}\\
+\texttt{analytics.dispersion} & Frequency~\eqref{eq:discrete} and the three-sample recurrence\\
+\texttt{analytics.fresnel} & Slab fields~\eqref{eq:fresnel-field}, \eqref{eq:fresnel-te}\\
+\texttt{analytics.mie2d} & Cylinder series~\eqref{eq:mie-tm}, \eqref{eq:mie-te}\\
+\midrule
+\texttt{operators.pml} & Stretch~\eqref{eq:stretch}, not yet\\
+\texttt{materials.sheets} & Impedance~\eqref{eq:sigma-sheet} and the symmetric cell, not yet\\
+\texttt{analytics.sheets} & $R,T$ from~\eqref{eq:R}, \eqref{eq:T}, not yet\\
+\texttt{grid.yee3d} & The same curls in three dimensions, not yet\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\texttt{YeeGrid2D} owns $n_x$, $n_y$, $\Delta x$, $\Delta y$, the polarization,
+and the boundary kind. Both drivers read shapes from it. A validation case is
+run in time or in frequency by constructing the other driver on the same
+object.
+
+\texttt{UniformIsotropic.sample\_tm} and \texttt{sample\_te} take the grid and
+optional \texttt{omega} and \texttt{state} arguments. Milestone~1 passes
+neither. A dispersive or externally modulated law implements the same methods
+and returns arrays of the same shapes. The stepper does not learn about
+temperature.
+
+The surface path stays off those arrays. A sheet object, when it exists, will
+receive the grid and replace the rows described in Sec.~\ref{sec:impedance}
+or Sec.~\ref{sec:symmetric-cell}. PEC is already a boundary kind rather than a
+material, because it removes unknowns instead of filling coefficients.
+
+\subsection{Relation to MaxwellMOM}
+\label{sec:mom}
+
+MaxwellMOM is a surface integral code: RWG bases, Green's functions, and dense
+blocks. MaxwellFD does not import it. The shared pieces are the convention and
+the analytic targets.
+
+\begin{itemize}
+\item $e^{j\omega t}$, and the four SI constants, copied numerically.
+\item Sheet reflection and transmission,~\eqref{eq:R} and~\eqref{eq:T},
+including the oblique factors and the $\chi_{mm}^{nn}$ correction, which are
+the formulas behind \texttt{rt\_from\_chi}.
+\item The map~\eqref{eq:chi-from-z} from a surface impedance to $\chi_{ee}$.
+\item Mie and Fresnel results as external checks, not as shared functions.
+\end{itemize}
+
+A number computed by MaxwellMOM for a configuration both codes can run (a flat
+sheet, a periodic cell) is a regression oracle. It is stored as a literal in a
+test, not read from the other repository at runtime.
+
+\subsection{Milestone map}
+\label{sec:milestones}
+
+\begin{enumerate}
+\item \textbf{This slice.} 2D grid, both drivers, PEC cavities, periodic
+dispersion, invariant~\eqref{eq:invariant}.
+\item Volumetric $\varepsilon(\mathbf{r})$, then $\varepsilon(\omega)$: complex
+permittivity in FDFD, Debye or Lorentz auxiliaries in FDTD. Slab versus
+Fresnel, cylinder versus 2D Mie. External maps enter only as arrays the law
+samples.
+\item PML from Sec.~\ref{sec:pml}, embedded PEC and PMC objects, open-region
+Mie. Then the 3D cell: a rectangular cavity, then a sphere small enough to
+factor.
+\item Resistive sheet, Sec.~\ref{sec:impedance}, against the analytic $R,T$
+and one MaxwellMOM run.
+\item Symmetric GSTC cell, Sec.~\ref{sec:symmetric-cell}, tangential $\chi$
+first, then $\chi_{mm}^{nn}$ and the bianisotropic terms in~\eqref{eq:bianiso}.
+\item Dipole, Gaussian beam, near-to-far, Bloch phase on the periodic wrap.
+\item Profiling, Numba, iterative FDFD, GPU. Spatially varying and spatially
+dispersive $\chi$ after the uniform sheet matches Sec.~\ref{sec:rt}.
+\end{enumerate}
+
+Acceleration does not change the curls. Numba and CuPy, when they arrive,
+replace the array update and the sparse matrix-vector product. The direct
+factorization remains the 2D reference.
+
+\begin{thebibliography}{9}
+\bibitem{yee1966}
+K.~S. Yee, ``Numerical solution of initial boundary value problems involving
+Maxwell's equations in isotropic media,'' \emph{IEEE Trans.\ Antennas
+Propag.}, 1966.
+\bibitem{gedney2000}
+J.~A. Roden and S.~D. Gedney, ``Convolution PML (CPML): An efficient FDTD
+implementation of the CFS--PML for arbitrary media,'' \emph{Microwave Opt.\
+Technol.\ Lett.}, 2000.
+\bibitem{smy2017}
+T.~J. Smy, S. Stewart, and S. Gupta, ``Integrated generalized sheet transition
+conditions in a Yee-cell based FDTD simulation of electromagnetic
+metasurfaces,'' arXiv:1706.10136, 2017.
+\bibitem{vahabzadeh2017}
+Y. Vahabzadeh, N. Chamanara, and C. Caloz, ``Generalized sheet transition
+condition FDTD simulation of metasurface,'' arXiv:1701.08760, 2017.
+\end{thebibliography}
+
+\end{document}

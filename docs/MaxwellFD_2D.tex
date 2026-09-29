@@ -1,0 +1,541 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{geometry}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{graphicx}
+
+\geometry{margin=1in}
+\setlist[itemize]{itemsep=0.2em,topsep=0.3em}
+\setlist[enumerate]{itemsep=0.2em,topsep=0.3em}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  citecolor=blue!50!black,
+  urlcolor=blue!60!black,
+  pdftitle={MaxwellFD: 2D Yee FDTD and FDFD},
+  pdfauthor={Tom Smy}
+}
+\makeatletter
+\g@addto@macro{\UrlBreaks}{\do\_\do\-}
+\makeatother
+
+\title{\textbf{MaxwellFD: 2D Yee FDTD and FDFD}\\[0.35em]
+\large Physics, methods, and code}
+\author{Tom Smy}
+\date{29 September 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+MaxwellFD is a Python Yee-cell solver. One uniform Cartesian grid, one
+material sampling, and one pair of discrete curls feed both a leapfrog
+(FDTD) and a sparse frequency-domain system (FDFD). Phasors use
+$e^{j\omega t}$, the same convention as MaxwellMOM. This note describes the
+physics and the method that are actually coded, how the package is
+organized, and how the Fresnel-slab and dielectric-cylinder examples are
+run and drawn. The equation reference, including the PML, the resistive
+sheet, and the GSTC cell, is \texttt{FD\_LaTeX\_Reference.tex}. Those three
+items are specified there and are not in the operators.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Status}
+\label{sec:status}
+
+Version 0.1.0 contains two slices.
+
+\begin{enumerate}
+\item The 2D cell in free space and in a uniform isotropic medium: TMz and
+TEz curls, PEC and periodic walls, the CFL limit, cavity eigenvalues, a
+manufactured FDFD solve, and a periodic standing wave.
+\item Volumetric media. A staircase assigns a real $\varepsilon$, $\mu$, and
+$\sigma\ge 0$ to each Yee sample. FDFD accepts a complex
+$\varepsilon(\omega)$. FDTD adds one bulk Debye pole or one bulk Lorentz
+pole through a polarization current. The closed-box checks are a Fresnel
+slab and a dielectric cylinder, both driven by an analytic Dirichlet trace
+on the existing PEC wall.
+\end{enumerate}
+
+MaxwellFD does not import MaxwellMOM. The shared pieces are the time
+convention, the four SI constants, and the analytic targets used as
+external checks. There is no 3D grid, no total-field/scattered-field
+boundary, no embedded PEC or PMC object, and no sheet unknown.
+
+\section{Physics}
+\label{sec:physics}
+
+Fields are in SI units. With the convention $e^{j\omega t}$, a wave
+$e^{-jk\hat{\mathbf{k}}\cdot\mathbf{r}}$ travels in the direction
+$\hat{\mathbf{k}}$, and $\partial_t$ becomes $j\omega$. The constants in
+\texttt{maxwell\_fd.utils.constants} are
+\begin{align*}
+c_0 &= 299792458\,\mathrm{m\,s^{-1}},&
+\varepsilon_0 &= 8.8541878128\times 10^{-12}\,\mathrm{F\,m^{-1}},\\
+\mu_0 &= 1.25663706212\times 10^{-6}\,\mathrm{H\,m^{-1}},&
+\eta_0 &= 376.73031346177\,\Omega.
+\end{align*}
+Faraday's law and Ampere's law with an impressed current $\mathbf{J}$ are
+\begin{align}
+\nabla\times\mathbf{E} &= -j\omega\mu\,\mathbf{H}, \label{eq:faraday}\\
+\nabla\times\mathbf{H} &= j\omega\varepsilon\,\mathbf{E}+\mathbf{J}.
+\label{eq:ampere}
+\end{align}
+A real conductivity is not a second impressed current. In FDFD it enters as
+$\varepsilon+\sigma/(j\omega)$ when $\varepsilon$ is real. A law that
+already returns a complex $\varepsilon(\omega)$ has included its loss, and
+the accompanying $\sigma$ must be zero.
+
+The grid lies in the $xy$-plane and nothing depends on $z$. TMz keeps
+$E_z$, $H_x$, and $H_y$. TEz keeps $H_z$, $E_x$, and $E_y$. The code never
+forms the scalar Helmholtz operator. Both drivers eliminate, or update, the
+magnetic field through the curls, so a face-by-face $\mu$ stays in the
+magnetic samples.
+
+On a PEC wall the tangential electric field is the boundary value stored
+with the grid. Milestone~1 sets that value to zero. The slab and the
+cylinder instead prescribe the analytic tangential trace and leave the
+impressed current at zero. A periodic wall identifies opposite faces with
+phase one. PMC, a stretched-coordinate PML, and a resistive or GSTC sheet
+are written in the formulation note and are not boundary kinds in
+\texttt{YeeGrid2D}. The grid accepts \texttt{Boundary.PEC} and
+\texttt{Boundary.PERIODIC} only.
+
+\subsection{Staircase media}
+\label{sec:staircase}
+
+A sample is inside a region when its own coordinate is inside. Electric and
+magnetic samples are tested separately. There is no volume fraction and no
+conformal cut. A slab perpendicular to $y$ occupies the half-open interval
+$y_0\le y<y_1$. A disk of radius $R$ centered at $(x_c,y_c)$ occupies
+$(x-x_c)^2+(y-y_c)^2\le R^2$. Later regions overwrite earlier ones. The
+background is the law passed to \texttt{StaircaseIsotropic}, usually
+\texttt{UniformIsotropic} with vacuum values.
+
+\subsection{Bulk dispersion}
+\label{sec:dispersion}
+
+One isotropic electric pole may fill the whole domain. The staircase does
+not yet vary the pole in space, and there is no magnetic dispersion.
+
+The Debye permittivity and its auxiliary are
+\begin{align}
+\varepsilon(\omega)
+&= \varepsilon_\infty + \frac{\varepsilon_0\Delta\varepsilon}{1+j\omega\tau},
+\label{eq:debye}\\
+\tau\,\partial_t P + P &= \varepsilon_0\Delta\varepsilon\, E.
+\label{eq:debye-ode}
+\end{align}
+The Lorentz permittivity and its auxiliary are
+\begin{align}
+\varepsilon(\omega)
+&= \varepsilon_\infty
+ + \frac{\varepsilon_0\omega_p^2}{\omega_0^2-\omega^2+j\gamma\omega},
+\label{eq:lorentz}\\
+\partial_t^2 P + \gamma\,\partial_t P + \omega_0^2 P
+&= \varepsilon_0\omega_p^2 E.
+\label{eq:lorentz-ode}
+\end{align}
+These are bulk oscillators. They are not the surface oscillators in the
+GSTC section of the formulation note. Ampere's update subtracts the
+polarization current $J_p$ with the impressed current,
+\begin{equation}
+\mathbf{E}
+\leftarrow C_a\mathbf{E}
+ + C_b\big(\nabla\times\mathbf{H}-\mathbf{J}_p-\mathbf{J}\big).
+\label{eq:jp}
+\end{equation}
+$C_a$ and $C_b$ are the usual lossy coefficients built on
+$\varepsilon_\infty$ and $\sigma$. The Lorentz auxiliary stores $P$ at
+integer steps and advances it explicitly from $E^n$. The Debye auxiliary is
+centered, $E^{n+1/2}=(E^{n+1}+E^n)/2$, and the update is local to each
+sample. TEz keeps one auxiliary on $E_x$ and one on $E_y$. A complex
+$\varepsilon$ is rejected by the leapfrog. Passing $\omega$ into
+\texttt{sample\_tm} or \texttt{sample\_te} is how FDFD sees
+\eqref{eq:debye} or \eqref{eq:lorentz} directly.
+
+\section{Discrete method}
+\label{sec:method}
+
+\subsection{Grid}
+\label{sec:grid}
+
+The domain is $[0,n_x\Delta x]\times[0,n_y\Delta y]$. Array axis~0 is $x$
+and axis~1 is $y$, so a sample is indexed $[i,j]$. Locations are those of
+the Yee cell. For a PEC grid the boundary electric samples are stored.
+TMz places $E_z$ on nodes, $H_x$ on the $y$-edges, and $H_y$ on the
+$x$-edges. TEz places $H_z$ at cell centers, $E_x$ on $y$-edges, and $E_y$
+on $x$-edges. $E_x$ is zero on $y\in\{0,b\}$ and $E_y$ is zero on
+$x\in\{0,a\}$ unless a Dirichlet trace replaces those zeros. Periodic
+identification drops the duplicate far side, and every stored sample is an
+unknown.
+
+\texttt{YeeGrid2D.coordinates} returns the 1D sample coordinates of one
+component. Those coordinates are the positions the staircase tests.
+
+\subsection{Curls}
+\label{sec:curls}
+
+The discrete operators are centered differences. On the PEC grids they are
+transposes of each other once the boundary electric samples have been
+removed from the unknown vector. An invalid degree-of-freedom id is $-1$
+and must be masked before any component offset is added. TMz uses
+\begin{equation}
+(\nabla\times E)_x = \partial_y E_z,
+\qquad
+(\nabla\times E)_y = -\partial_x E_z,
+\label{eq:curl-tm}
+\end{equation}
+and the matching Ampere pair. TEz uses
+\begin{equation}
+\nabla\times\mathbf{E}
+= \partial_x E_y - \partial_y E_x,
+\qquad
+E_x = \partial_y H_z,
+\qquad
+E_y = -\partial_x H_z.
+\label{eq:curl-te}
+\end{equation}
+The array curls and the sparse curls implement the same stencil.
+The array form keeps every sample, including the boundary values. The
+sparse pair used by FDFD drops the PEC rows.
+
+The sign in \eqref{eq:faraday} is not stored inside the factored FDFD
+matrix. Reconstructing a physical magnetic field from a Yee electric field
+requires
+\begin{equation}
+\mathbf{H} = -\frac{\nabla\times\mathbf{E}}{j\omega\mu}.
+\label{eq:h-from-e}
+\end{equation}
+Omitting the minus negates $H_x$ or $H_z$. The example plots use
+\eqref{eq:h-from-e}.
+
+\subsection{Leapfrog}
+\label{sec:leapfrog}
+
+One step advances $\mathbf{H}$ from time $n-\tfrac12$ to $n+\tfrac12$, then
+$\mathbf{E}$ from $n$ to $n+1$. With real $\varepsilon$ and $\sigma$,
+\begin{equation}
+C_a = \frac{1-\sigma\Delta t/(2\varepsilon)}{1+\sigma\Delta t/(2\varepsilon)},
+\qquad
+C_b = \frac{\Delta t/\varepsilon}{1+\sigma\Delta t/(2\varepsilon)}.
+\label{eq:ca-cb}
+\end{equation}
+$J=0$ and $J_p=0$ is the milestone-1 update. The stable step on a uniform
+medium of speed $c$ satisfies
+\begin{equation}
+\Delta t \le \frac{1}{c\sqrt{\Delta x^{-2}+\Delta y^{-2}}}.
+\label{eq:cfl}
+\end{equation}
+When $\sigma=0$ the leapfrog invariant, not the sum of the staggered sample
+energies, is the conserved quantity. The fully discrete frequency of a mode
+lies slightly above its semi-discrete frequency.
+
+\subsection{FDFD and the Dirichlet trace}
+\label{sec:fdfd}
+
+Eliminating $\mathbf{H}$ produces the electric system
+\begin{equation}
+\nabla\times\big(\mu^{-1}\nabla\times\mathbf{E}\big)
+- \omega^2\varepsilon\,\mathbf{E}
+= -j\omega\mathbf{J},
+\label{eq:fdfd-strong}
+\end{equation}
+stored as $A\mathrm{e}=-\mathrm{j}$. The real eigenproblem
+$K\mathrm{e}=\omega^2 M\mathrm{e}$ still requires real positive
+$\varepsilon$ and $\mu$ and $\sigma=0$. On a TEz PEC box the curl-curl
+operator has a gradient kernel, so a computed $\omega$ at roundoff is
+discarded before the physical spectrum is read.
+
+Boundary electric samples stay out of the unknown vector. A trace $e_D$
+that equals the prescribed boundary values, and is zero on the free
+samples, moves to the right-hand side,
+\begin{equation}
+A_{ff}\,\mathrm{e}_f = -\mathrm{j} - (A e_D)_f.
+\label{eq:dirichlet}
+\end{equation}
+The free-row action is the array form of the left-hand side of the FDFD
+equation. Calling \texttt{solve} with no trace, or with a zero trace, is
+the milestone-1 solve. The slab and the cylinder pass \texttt{dirichlet}
+set to the analytic boundary field and set $\mathrm{j}=0$. This closes the
+box with a prescribed trace. It does not stretch a coordinate and it does
+not add auxiliary fields.
+
+\subsection{Analytic checks}
+\label{sec:analytics}
+
+Both scattering checks use the trace \eqref{eq:dirichlet} on every PEC
+electric sample. The interior material is the staircase of
+Sec.~\ref{sec:staircase}. The comparison is the gap left by numerical
+dispersion and, for the cylinder, by the staircase.
+
+\paragraph{Fresnel slab.}
+A non-magnetic slab $y_1\le y<y_2$ of index $n=\sqrt{\varepsilon_r}$ sits in
+vacuum. The incident wave travels toward $+y$ and has phase zero at the
+front face. TMz reflects with $r=(1-n)/(1+n)$. TEz reflects $H_z$ with
+$r_H=(n-1)/(n+1)=-r$, so $R_H=-R$ while the transmission amplitude,
+including the transit phase $e^{-jkd}$, is the same. The interior
+amplitudes are not the same: TMz splits $1\pm R$ with $1/n$, and TEz splits
+$1\pm R_H$ with $n$. When $\varepsilon_r=1$, both reflections vanish and the
+field is the incident wave, not a transmission of $1$. The closed forms are
+\texttt{slab\_coefficients} and \texttt{slab\_fields}. A forced branch
+(\texttt{below}, \texttt{slab}, \texttt{above}) evaluates one piecewise
+piece at a face, where the two neighboring expressions must agree.
+
+The comparison wavelength is kept off the TEz eigenfrequencies of the PEC
+box. On the $8\times 80$ domain with $\Delta=1$, $\lambda=40$ is one of
+those frequencies and the Dirichlet matrix is singular. The shipped example
+uses $\lambda=46$, $\Delta=0.5$, and faces $y=30.375$ and $y=50.375$, which
+miss the electric nodes of both that grid and the once-refined grid.
+
+\paragraph{Dielectric cylinder.}
+The outgoing wave is $H_n^{(2)}$. The incident field $e^{-jkx}$ has the
+Jacobi--Anger coefficients $(-j)^n$. TMz is the $E_z$ series. TEz is the
+$H_z$ series, with the contrast on the undifferentiated interior Bessel
+function, because $E_\varphi$ brings $1/\varepsilon$. The PEC coefficient
+$a_n=-(-j)^n J_n(ka)/H_n^{(2)}(ka)$ is a separate regression. It is not the
+limit $\varepsilon_r\to\infty$ of the dielectric formula. The truncation
+follows the MaxwellMOM rule
+$\lceil |ka|+4|ka|^{1/3}+8\rceil$, and the derivative is the recurrence
+$\tfrac12(f_{n-1}-f_{n+1})$.
+
+\section{Code}
+\label{sec:code}
+
+The installable package is \texttt{maxwell\_fd}, version 0.1.0. Its source
+is \texttt{src/maxwell\_fd}. NumPy and SciPy are required. Matplotlib is
+the \texttt{viz} extra and is also a dependency of the conda environment
+\texttt{maxwell-fd}.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{9.2cm}@{}}
+\toprule
+Module & Role\\
+\midrule
+\texttt{grid.yee2d}
+& \texttt{YeeGrid2D}, \texttt{Polarization}, \texttt{Boundary}, coordinates\\
+\texttt{materials.volume}
+& Uniform, staircase, mapped $\varepsilon(x,y)$, component arrays\\
+\texttt{materials.dispersion}
+& \texttt{DebyeDielectric}, \texttt{LorentzDielectric}, and their auxiliaries\\
+\texttt{operators.curl2d}
+& Sparse \texttt{curl\_e}, \texttt{curl\_h}, array curls, DOF layout\\
+\texttt{drivers.fdtd2d}
+& \texttt{step\_tmz}, \texttt{step\_tez}, CFL step, leapfrog invariant\\
+\texttt{drivers.fdfd2d}
+& \texttt{FDFDOperator}: system, eigenproblem, Dirichlet solve\\
+\texttt{analytics.cavity2d}
+& Semi-discrete cavity frequencies and mode shapes\\
+\texttt{analytics.dispersion}
+& Fully discrete frequency and the three-sample fit\\
+\texttt{analytics.fresnel}
+& Slab coefficients and fields\\
+\texttt{analytics.mie2d}
+& Cylinder coefficients and $E_z$, $H_z$, $E_x$, $E_y$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+A frequency-domain TMz solve with a staircase disk has this shape. The
+trace argument is omitted when the wall is a homogeneous PEC.
+
+\begin{verbatim}
+grid = YeeGrid2D(nx, ny, dx, dy, Polarization.TMZ, Boundary.PEC)
+law = StaircaseIsotropic(
+    UniformIsotropic(),
+    (Disk(cx, cy, radius, eps=eps_r * EPS0),),
+)
+operator = FDFDOperator(grid, law.sample_tm(grid))
+ez = operator.solve(omega, np.zeros(operator.layout.n_e),
+                    dirichlet={"ez": ez_trace})
+\end{verbatim}
+
+\texttt{sample\_tm(grid)} and \texttt{sample\_te(grid)} without $\omega$
+return the real instantaneous coefficients used by the leapfrog
+($\varepsilon_\infty$ when the law is dispersive). Passing $\omega$ allows
+a complex permittivity. \texttt{step\_tmz} and \texttt{step\_tez} take the
+impressed current and the polarization current as optional arguments. Their
+defaults reproduce the milestone-1 update.
+
+The real eigenproblem is \texttt{spatial\_operator}, which returns the pair
+$(K,M)$. TEz results should drop nonpositive eigenvalues before they are
+compared with the semi-discrete formula.
+
+\section{Examples}
+\label{sec:examples}
+
+Scripts under \texttt{examples/fdfd/2d/} and \texttt{examples/fdtd/} are the
+runnable demos. Placeholders under \texttt{examples/fdfd/3d} and
+\texttt{examples/fdtd} hold the directory tree and do not solve a 3D or a
+time-domain scattering problem. From the project directory, with the
+conda environment \texttt{maxwell-fd} active,
+
+\begin{verbatim}
+python examples/fdfd/2d/fresnel_slab.py
+python examples/fdfd/2d/dielectric_cylinder.py
+\end{verbatim}
+
+Each script writes a sibling directory whose name is the script stem plus
+the parameters of that run, in the order they are passed to
+\texttt{examples/run\_dir.output\_dir}. Floats are formatted with twelve
+significant digits and trailing zeros removed, so \texttt{2.0} becomes
+\texttt{2} and \texttt{0.5} stays \texttt{0.5}. Keys do not contain
+underscores.
+
+Field maps use \texttt{pcolormesh} with Gouraud shading. Each polarization
+is a row of three columns: the Yee field, the analytic field, and their
+difference. The cylinder columns are FD, Mie, and FD$-$Mie. The slab
+columns are FD, Fresnel, and FD$-$Fresnel. Color limits of the first two
+columns match. The difference has its own scale. The cylinder outline, or
+the slab faces, is drawn on every panel.
+
+\subsection{Fresnel slab}
+\label{sec:ex-fresnel}
+
+\begin{verbatim}
+python examples/fdfd/2d/fresnel_slab.py \
+    --index 2 --thickness 20 --y1 30.375 --wavelength 46 \
+    --length 8 --height 80 --dx 0.5 --pml 1
+\end{verbatim}
+
+\texttt{--index} is the refractive index $n$, and the permittivity used in
+the solve is $\varepsilon_r=n^2$. The default $n=2$ is $\varepsilon_r=4$.
+\texttt{--length} and \texttt{--height} are the region sides along $x$ and
+$y$. Both must be a positive integer number of cells of size
+\texttt{--dx}, and each direction needs at least two cells.
+\texttt{--pml} is a thickness at each end in $y$ only. It must be a
+positive multiple of $\Delta$ and must leave the slab in the open interval
+$(\texttt{pml},\,\texttt{height}-\texttt{pml})$.
+
+The default run writes
+\begin{center}
+\path{fresnel_slab_index2_d20_lam46_y130.375_length8_height80_dx0.5_pml1/}
+\end{center}
+\begin{itemize}
+\item \texttt{domain.png}, the mesh, the slab, the $y$-end bands, and the
+$x$ walls;
+\item \texttt{fresnel\_slab.png}, TMz $E_z$ and TEz $H_z$ in three columns;
+\item \texttt{cuts.png}, the center-column cuts of $E_z$, $H_x$, $E_x$, and
+$H_z$ against the analytic curves.
+\end{itemize}
+On this grid the free-sample electric $L^2$ errors annotated on the figures
+are $0.23\%$ (TMz) and $1.30\%$ (TEz). Those numbers are the result of this
+particular grid. The acceptance bars in the formulation note are wider and
+were not changed to match them.
+
+Propagation is $+y$, drawn horizontal so the figure reads with the line
+cuts. The incident field does not depend on $x$, and neither does the slab.
+The orange bands are therefore only the two ends $y=0$ and $y=b$. The walls
+$x=0$ and $x=a$ are drawn in green and labeled as the PEC trace: every
+boundary electric sample on those walls is set to the analytic Fresnel
+value, together with the samples on $y=0$ and $y=b$. The slab rectangle
+spans the full width in $x$. Figure~\ref{fig:fresnel-domain} is that
+layout. Nothing in \texttt{FDFDOperator} stretches a coordinate. The orange
+bands document where a later PML would close the propagation direction.
+They are not absorbing layers in this solve.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{../examples/fdfd/2d/fresnel_slab_index2_d20_lam46_y130.375_length8_height80_dx0.5_pml1/domain.png}
+\caption{Default Fresnel domain. Orange bands are the $y$-end PML thickness
+drawn on the figure. Green edges are the PEC trace at $x=0$ and $x=8$.}
+\label{fig:fresnel-domain}
+\end{figure}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{../examples/fdfd/2d/fresnel_slab_index2_d20_lam46_y130.375_length8_height80_dx0.5_pml1/fresnel_slab.png}
+\caption{Default Fresnel maps. Vertical lines mark the slab faces. $H_z$ is
+rebuilt with \eqref{eq:h-from-e}. The annotated $L^2$ errors are the free
+electric samples.}
+\label{fig:fresnel-fields}
+\end{figure}
+
+\subsection{Dielectric cylinder}
+\label{sec:ex-cylinder}
+
+\begin{verbatim}
+python examples/fdfd/2d/dielectric_cylinder.py \
+    --radius 10 --index 1.5 --size 50 --dx 1 --pml 8
+\end{verbatim}
+
+The region is a square of side \texttt{--size}. \texttt{--index} is again
+$n$, with $\varepsilon_r=n^2$. The default $n=1.5$ is $\varepsilon_r=2.25$.
+The size parameter $ka$ is held at $1$, so $k=1/a$ and the wavelength scales
+with the radius. The radius must be positive and smaller than half the
+side length minus the PML thickness. The default run writes
+\begin{center}
+\path{dielectric_cylinder_index1.5_ka1_a10_size50_dx1_pml8/}
+\end{center}
+with \texttt{domain.png} and \texttt{dielectric\_cylinder.png}.
+
+The cylinder scatters in the plane of the grid, so the domain figure draws
+the PML thickness on all four sides. As in the slab example, that frame is
+a layout. The solve is still \eqref{eq:dirichlet} on the PEC wall, with the
+Mie field as the trace and with the staircase disk as the only material
+contrast. TMz shows $\mathrm{Re}\,E_z$. TEz shows $\mathrm{Re}\,H_z$ from
+\eqref{eq:h-from-e}, and the annotated $L^2$ error is the free-sample error
+in $E_x$ and $E_y$. On the default grid those errors are $0.44\%$ and
+$2.07\%$.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.72\textwidth]{../examples/fdfd/2d/dielectric_cylinder_index1.5_ka1_a10_size50_dx1_pml8/domain.png}
+\caption{Default cylinder domain. The orange frame is the drawn PML
+thickness. The disk is the staircase geometry. The outer boundary of the
+solve remains the PEC trace.}
+\label{fig:cyl-domain}
+\end{figure}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{../examples/fdfd/2d/dielectric_cylinder_index1.5_ka1_a10_size50_dx1_pml8/dielectric_cylinder.png}
+\caption{Default cylinder maps against the Mie series at $ka=1$, $n=1.5$.}
+\label{fig:cyl-fields}
+\end{figure}
+
+\section{Tests and later slices}
+\label{sec:tests}
+
+The suite is \texttt{pytest} from the project root, twenty-five tests in
+\texttt{tests/}. Milestone~1 checks the curls, the adjoint, the cavity
+eigenvalues, the manufactured solve, the invariant and the CFL growth, and
+the fully discrete dispersion, with relative or absolute bars from
+$10^{-12}$ to $10^{-6}$ as listed in the formulation note. Milestone~2 adds
+the manufactured solve with $\sigma>0$ and with a smooth
+$\varepsilon(x,y)$, a uniform $\varepsilon_r=4$ cavity, the slab-loaded
+cavity, the lossless staircase invariant, Fresnel face continuity, the Mie
+continuity and PEC coefficient, the Fresnel and cylinder $L^2$ bars of
+$2\times 10^{-2}$, and one period of Debye and Lorentz evolution. A failing
+bar is a reason to refine the grid in that test, not to widen the bar.
+
+The formulation note already fixes the formulas for the slices that are not
+coded: the convolutional PML, embedded PEC and PMC, open-region Mie, the 3D
+cell, a resistive sheet, the symmetric GSTC cell, impressed beams, a
+near-to-far integral, and a Bloch phase. The example domain figures are the
+picture of where the $y$-end PML, or the four-sided PML, will sit. They do
+not implement the stretch.
+
+\begin{thebibliography}{9}
+\bibitem{yee1966}
+K.~S. Yee, ``Numerical solution of initial boundary value problems
+involving Maxwell's equations in isotropic media,'' \emph{IEEE Trans.\
+Antennas Propag.}, 1966.
+\bibitem{smy2017}
+T.~J. Smy, S. Stewart, and S. Gupta, ``Integrated generalized sheet
+transition conditions in a Yee-cell based FDTD simulation of
+electromagnetic metasurfaces,'' arXiv:1706.10136, 2017.
+\end{thebibliography}
+
+\end{document}
