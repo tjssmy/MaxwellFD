@@ -22,6 +22,10 @@ because that factor depends on ``ω``.
 Embedded PEC and PMC objects remove samples from that same unknown vector.
 PEC drops electric samples and PMC drops magnetic samples. The eigenproblem
 accepts the conductors. It still refuses a PML.
+
+A non-magnetic open dielectric keeps every sample. The caller passes the
+contrast current ``J = j ω (ε − ε0) E_inc`` and the unknown is the
+scattered field. The diagonal still holds the full staircase permittivity.
 """
 
 from __future__ import annotations

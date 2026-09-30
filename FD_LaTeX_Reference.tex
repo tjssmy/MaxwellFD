@@ -203,6 +203,15 @@ a nodal potential that is constant on the PEC boundary has zero circulation.
 Those eigenvalues are zero. They are not cavity modes. The physical spectrum
 is the positive one.
 
+The 3D cell uses the same partial derivatives on every axis. Sample
+locations extend Table~\ref{tab:shapes}: $E_x$ sits at
+$((i+\tfrac12)\Delta x,\, j\Delta y,\, k\Delta z)$, and each electric
+component is staggered along its own direction. The magnetic components
+are staggered along the other two. A PEC wall drops the tangential
+electric samples. Magnetic samples that do not touch a free electric
+sample are omitted, so~\eqref{eq:adjoint} still holds on a PEC box and on
+a periodic box.
+
 \subsection{Leapfrog update}
 \label{sec:leapfrog}
 
@@ -343,6 +352,15 @@ consistent with the stencil are
 E_z &= \sin(m\pi x/a)\sin(n\pi y/b), \label{eq:mode-tm}\\
 H_z &= \cos(m\pi x/a)\cos(n\pi y/b). \label{eq:mode-te}
 \end{align}
+A rectangular box $a\times b\times c$ adds the term
+$(2\sin(k_z\Delta z/2)/\Delta z)^2$ to~\eqref{eq:semi}, with
+$k_z=p\pi/c$. The indices are non-negative and at least two of them are
+positive. A mode with exactly one index equal to zero is a single
+Cartesian component: $(m,n,0)$ is $E_z=\sin(m\pi x/a)\sin(n\pi y/b)$,
+$(m,0,p)$ is $E_y$, and $(0,n,p)$ is $E_x$. These three are exact
+eigenmodes of the centered difference. A mode with three positive indices
+has two polarizations linked by $k_x A_x+k_y A_y+k_z A_z=0$.
+
 A pure spatial eigenmode sampled on three successive steps obeys the scalar
 leapfrog recurrence. Those three numbers determine $\omega$ without a
 Fourier transform.
@@ -531,6 +549,15 @@ $e_D=-E_{\mathrm{inc}}$ on the object and $e_D=0$ on the outer wall, and
 the PML absorbs the scattered field. Inside the object the total electric
 field is zero.
 
+An open dielectric cylinder keeps that PML and the homogeneous outer wall.
+It does not remove interior samples. The staircase permittivity stays on
+the diagonal of~\eqref{eq:fdfd}, and the incident wave enters as the
+impressed current $J=j\omega(\varepsilon-\varepsilon_0)E_{\mathrm{inc}}$
+on the electric samples. The current is zero wherever
+$\varepsilon=\varepsilon_0$. A free sample of the total field is
+$E_s+E_{\mathrm{inc}}$. Inside the disk the total field is the Bessel
+series of Sec.~\ref{sec:mie2d}.
+
 \section{Validation}
 \label{sec:validation}
 
@@ -623,9 +650,12 @@ cavity of height $b_{\mathrm{short}}$. A PMC band whose lower edge sits on
 an $H_x$ row, $y=(J+\tfrac12)\Delta y$, leaves the TMz quarter-wave
 $k_y=(n+\tfrac12)\pi/y_{\mathrm{face}}$. Decoupled electric samples above
 that cut are zero eigenvalues and are dropped before the comparison. The
-open PEC rows use a $64\times 64$ grid with $\Delta=1$, $a=8$, eight PML
+open rows use a $64\times 64$ grid with $\Delta=1$, $a=8$, eight PML
 cells, and $ka=1$. The series takes $k=\omega\sqrt{\mu_0\varepsilon_0}$.
-The window is the unstretched samples with $\rho\ge a+2\Delta$.
+The PEC window is the unstretched samples with $\rho\ge a+2\Delta$. The
+dielectric rows use that grid with $n=1.5$. Their window is the
+unstretched samples with $|\rho-a|\ge 2\Delta$, inside and outside the
+disk, and the drive is the contrast current of Sec.~\ref{sec:dirichlet}.
 
 \begin{center}
 \small
@@ -635,8 +665,34 @@ Check & Bar & What is compared\\
 \midrule
 PEC band, both polarizations & $10^{-10}$ relative & Shortened cavity versus~\eqref{eq:semi}\\
 PMC quarter-wave, TMz & $10^{-10}$ relative & Lowest positive eigenvalue, $k_y=\pi/(2y_{\mathrm{face}})$\\
-Open PEC cylinder, TMz & $8\cdot 10^{-2}$ relative & $E_z$ on the window above\\
-Open PEC cylinder, TEz & $10^{-1}$ relative & $E_x$ and $E_y$ on that window\\
+Open PEC cylinder, TMz & $8\cdot 10^{-2}$ relative & $E_z$, $\rho\ge a+2\Delta$\\
+Open PEC cylinder, TEz & $10^{-1}$ relative & $E_x$ and $E_y$, same window\\
+Open dielectric cylinder, TMz & $8\cdot 10^{-3}$ relative & $E_z$, $|\rho-a|\ge 2\Delta$\\
+Open dielectric cylinder, TEz & $1.3\cdot 10^{-2}$ relative & $E_x$ and $E_y$, same window\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The 3D curls use the partial derivatives of Sec.~\ref{sec:curls} on every
+axis. The cavity row compares the Rayleigh quotient of a known mode with
+\eqref{eq:semi} after the term $(2\sin(k_z\Delta z/2)/\Delta z)^2$ is
+added, with $k_z=p\pi/c$. The box is $8\times 6\times 5$ cells at
+$\Delta=1$, and the modes are $(1,1,0)$, $(1,0,1)$, and $(0,1,1)$. Each
+has one index equal to zero and a single Cartesian component. The
+manufactured row recovers a random electric vector on a $6\times 5\times 4$
+box with spacings $0.5$, $0.4$, and $0.3$.
+
+\begin{center}
+\small
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{5.0cm}>{\raggedright\arraybackslash}p{3.5cm}>{\raggedright\arraybackslash}p{6.2cm}@{}}
+\toprule
+Check & Bar & What is compared\\
+\midrule
+3D linear curls & $10^{-12}$ absolute & Centered differences of a linear field\\
+3D $\mathrm{curl}_H=\mathrm{curl}_E^{\mathsf T}$ & $10^{-12}$ absolute & PEC and periodic boxes\\
+3D matrix versus array curl & $10^{-12}$ relative & Same boxes, PEC boundaries held at zero\\
+3D PEC cavity, three pure modes & $10^{-10}$ relative & $8\times 6\times 5$ box, versus~\eqref{eq:semi} plus $z$\\
+3D manufactured FDFD solve & $10^{-10}$ relative & Recovered $\mathrm{e}$ on a $6\times 5\times 4$ box\\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -729,14 +785,13 @@ $E_\varphi=0$, is
 $a_n=-(-j)^n J_n'(\alpha)/H_n^{(2)\prime}(\alpha)$.
 
 The open PEC cylinder is the scattered-field pair in the conductor table
-above. Later slices add comparisons that this note already fixes the
+above. The open dielectric cylinder is the contrast-current pair in that
+same table. Later slices add comparisons that this note already fixes the
 formulas for, and that the code does not yet run:
 
 \begin{itemize}
-\item an open dielectric cylinder against Mie, on the PML of
-Sec.~\ref{sec:pml};
-\item a 3D rectangular cavity, then a sphere against the Mie series, at a
-size~\eqref{eq:fdfd} can still factor;
+\item a sphere against the 3D Mie series, at a size~\eqref{eq:fdfd} can
+still factor;
 \item a resistive sheet against~\eqref{eq:zs} and against one MaxwellMOM
 impedance run of the same case;
 \item a uniform GSTC sheet against the $R,T$ formulas of
@@ -962,10 +1017,14 @@ Module & Responsibility\\
 \texttt{analytics.fresnel} & Slab fields~\eqref{eq:fresnel-field}, \eqref{eq:fresnel-te}\\
 \texttt{analytics.mie2d} & Cylinder series~\eqref{eq:mie-tm}, \eqref{eq:mie-te}\\
 \texttt{analytics.green2d} & Outgoing line current, $H_0^{(2)}$\\
+\texttt{grid.yee3d} & 3D counts, spacings, boundary, shapes, coordinates\\
+\texttt{materials.volume3d} & Uniform isotropic $\varepsilon,\mu,\sigma$\\
+\texttt{operators.curl3d} & 3D \texttt{curl\_e}, \texttt{curl\_h}, array curls\\
+\texttt{drivers.fdfd3d} & System~\eqref{eq:fdfd} on $(E_x,E_y,E_z)$\\
+\texttt{analytics.cavity3d} & Frequency~\eqref{eq:semi} plus the $z$ term\\
 \midrule
 \texttt{materials.sheets} & Impedance~\eqref{eq:sigma-sheet} and the symmetric cell, not yet\\
 \texttt{analytics.sheets} & $R,T$ from~\eqref{eq:R}, \eqref{eq:T}, not yet\\
-\texttt{grid.yee3d} & The same curls in three dimensions, not yet\\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -973,7 +1032,10 @@ Module & Responsibility\\
 \texttt{YeeGrid2D} owns $n_x$, $n_y$, $\Delta x$, $\Delta y$, the polarization,
 and the boundary kind. Both drivers read shapes from it. A validation case is
 run in time or in frequency by constructing the other driver on the same
-object.
+object. \texttt{YeeGrid3D} owns the three counts, the three spacings, and the
+same boundary kind. The 3D grid is its own object: every component that the
+stencil staggers in $z$ carries that stagger. Its FDFD driver reads the same
+elimination, \eqref{eq:fdfd}, on $(E_x,E_y,E_z)$.
 
 \texttt{UniformIsotropic.sample\_tm} and \texttt{sample\_te} take the grid and
 optional \texttt{omega} and \texttt{state} arguments. Milestone~1 passes
@@ -1018,10 +1080,10 @@ dispersion, invariant~\eqref{eq:invariant}.
 permittivity in FDFD, Debye or Lorentz auxiliaries in FDTD. Slab versus
 Fresnel, cylinder versus 2D Mie. External maps enter only as arrays the law
 samples.
-\item PML from Sec.~\ref{sec:pml}, embedded PEC and PMC objects, and an open
-PEC cylinder against the Mie series. Still open on this step: a dielectric
-cylinder on the same PML, then the 3D cell, a rectangular cavity and a
-sphere small enough to factor.
+\item PML from Sec.~\ref{sec:pml}, embedded PEC and PMC objects, an open
+PEC cylinder, and an open dielectric cylinder, both against the Mie
+series. The 3D cell and a rectangular PEC cavity are in the code. Still
+open on this step: a sphere small enough to factor.
 \item Resistive sheet, Sec.~\ref{sec:impedance}, against the analytic $R,T$
 and one MaxwellMOM run.
 \item Symmetric GSTC cell, Sec.~\ref{sec:symmetric-cell}, tangential $\chi$

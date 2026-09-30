@@ -11,6 +11,7 @@ from maxwell_fd.materials.volume import (
     TMComponents,
     UniformIsotropic,
 )
+from maxwell_fd.materials.volume3d import FieldComponents3D, UniformIsotropic3D
 
 __all__ = [
     "Circle",
@@ -25,4 +26,6 @@ __all__ = [
     "TEComponents",
     "TMComponents",
     "UniformIsotropic",
+    "FieldComponents3D",
+    "UniformIsotropic3D",
 ]

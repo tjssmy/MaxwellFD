@@ -1,1 +1,1 @@
-"""FDTD and FDFD drivers on one Yee grid."""
+"""2D FDTD and FDFD drivers, and a 3D FDFD operator."""

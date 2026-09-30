@@ -45,9 +45,13 @@ organized, and how the Fresnel-slab, dielectric-cylinder, PML
 line-current, and open PEC-cylinder examples are run and drawn. The
 equation reference is \texttt{FD\_LaTeX\_Reference.tex}. The convolutional
 PML from that note is coded as a stretch of the normal derivatives on a
-PEC-backed band. Embedded PEC and PMC objects remove Yee samples, and an
-open PEC cylinder is compared with the Mie series on that band. The
-resistive sheet and the GSTC cell remain specified in that note.
+PEC-backed band.
+Embedded PEC and PMC objects remove Yee samples, and an open PEC cylinder
+is compared with the Mie series on that band. An open dielectric cylinder
+on the same band is driven by the contrast current
+$J=j\omega(\varepsilon-\varepsilon_0)E_{\mathrm{inc}}$. A 3D PEC cavity
+checks three pure modes of the Yee cell. The resistive
+sheet and the GSTC cell remain specified in that note.
 \end{abstract}
 
 \tableofcontents
@@ -77,13 +81,23 @@ on the unstretched samples.
 its region. PMC drops every magnetic sample. The open check is a PEC
 cylinder: the unknown is the scattered field, the object carries the trace
 $-E_{\mathrm{inc}}$, and the PML absorbs the outgoing wave.
+\item An open dielectric cylinder on that PML. The staircase disk stays in
+the operator. The incident wave is the impressed current
+$J=j\omega(\varepsilon-\varepsilon_0)E_{\mathrm{inc}}$, and a free sample
+of the total field is $E_s+E_{\mathrm{inc}}$.
+\item The 3D Yee cell and a sparse FDFD operator on a rectangular box.
+Uniform isotropic media, with PEC and periodic walls. Three pure cavity
+modes are checked by a Rayleigh quotient against the semi-discrete
+frequency with the third centered difference.
 \end{enumerate}
 
 MaxwellFD does not import MaxwellMOM. The shared pieces are the time
 convention, the four SI constants, and the analytic targets used as
-external checks. There is no 3D grid and no sheet unknown. Embedded PEC
-and PMC objects remove Yee samples. The open PEC cylinder is a
-scattered-field solve on the PML.
+external checks. The 3D grid is a rectangular box with a uniform
+isotropic medium. Sheets, a 3D PML, and a 3D leapfrog remain later
+slices. Embedded PEC and PMC objects remove Yee samples on the 2D grid.
+The open PEC cylinder and the open dielectric cylinder are
+scattered-field solves on the PML.
 
 \section{Physics}
 \label{sec:physics}
@@ -394,6 +408,14 @@ follows the MaxwellMOM rule
 $\lceil |ka|+4|ka|^{1/3}+8\rceil$, and the derivative is the recurrence
 $\tfrac12(f_{n-1}-f_{n+1})$.
 
+The open dielectric cylinder compares this series on the PML of
+Sec.~\ref{sec:pml}. The unknown is the scattered field and the outer wall
+is homogeneous. The incident wave enters as the impressed current
+$J=j\omega(\varepsilon-\varepsilon_0)E_{\mathrm{inc}}$, sampled with the
+staircase permittivity that stays in the operator. A free sample of the
+total field is $E_s+E_{\mathrm{inc}}$. The closed-box cylinder still
+prescribes the Mie trace.
+
 \paragraph{Line current.}
 A $z$-directed current whose integral is $I$ satisfies
 $(\nabla^2+k^2)E_z=j\omega\mu J_z$ in a uniform medium. For $e^{+j\omega t}$
@@ -404,6 +426,21 @@ the solver uses. The discrete sample is $J_z=I/(\Delta x\Delta y)$. The
 comparison keeps the unstretched samples at least $\lambda/2$ from the
 source. The continuous field diverges at $\rho=0$, and that sample is left
 undefined.
+
+\subsection{3D cell}
+\label{sec:cell3d}
+
+The 3D grid stores all six components. $E_x$ sits at
+$((i+\tfrac12)\Delta x,\, j\Delta y,\, k\Delta z)$, and the other electric
+components are staggered on their own axes. PEC drops the tangential
+electric samples. Magnetic samples that do not touch a free electric
+sample are omitted, so the unstretched curls remain transposes. The FDFD
+matrix is the elimination in \eqref{eq:fdfd-strong}, with the diagonal
+$\varepsilon+\sigma/(j\omega)$ when $\varepsilon$ is real. The rectangular
+cavity frequency is the two-dimensional semi-discrete formula with the
+added term $(2\sin(k_z\Delta z/2)/\Delta z)^2$ and $k_z=p\pi/c$. A mode
+with exactly one index equal to zero is one Cartesian component:
+$(m,n,0)$ is $E_z$, $(m,0,p)$ is $E_y$, and $(0,n,p)$ is $E_x$.
 
 \section{Code}
 \label{sec:code}
@@ -445,6 +482,16 @@ Module & Role\\
 & Cylinder coefficients and $E_z$, $H_z$, $E_x$, $E_y$\\
 \texttt{analytics.green2d}
 & Outgoing line-current $E_z$\\
+\texttt{grid.yee3d}
+& \texttt{YeeGrid3D}: six components, PEC and periodic shapes\\
+\texttt{materials.volume3d}
+& Uniform isotropic $\varepsilon$, $\mu$, and $\sigma$\\
+\texttt{operators.curl3d}
+& Sparse and array curls on the 3D cell\\
+\texttt{drivers.fdfd3d}
+& \texttt{FDFDOperator3D}: system and real eigenproblem\\
+\texttt{analytics.cavity3d}
+& Semi-discrete frequency with the $z$ term, and the pure modes\\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -482,10 +529,9 @@ semi-discrete formula.
 \section{Examples}
 \label{sec:examples}
 
-Scripts under \texttt{examples/fdfd/2d/} and \texttt{examples/fdtd/} are the
-runnable demos. Placeholders under \texttt{examples/fdfd/3d} and
-\texttt{examples/fdtd} hold the directory tree and do not solve a 3D or a
-time-domain scattering problem. From the project directory, with the
+Scripts under \texttt{examples/fdfd/2d/}, \texttt{examples/fdfd/3d/}, and
+\texttt{examples/fdtd/} are the runnable demos. The time-domain tree does
+not yet solve a scattering problem. From the project directory, with the
 conda environment \texttt{maxwell-fd} active,
 
 \begin{verbatim}
@@ -493,6 +539,8 @@ python examples/fdfd/2d/fresnel_slab.py
 python examples/fdfd/2d/dielectric_cylinder.py
 python examples/fdfd/2d/pml_line.py
 python examples/fdfd/2d/pec_cylinder.py
+python examples/fdfd/2d/dielectric_cylinder_open.py
+python examples/fdfd/3d/cavity.py
 \end{verbatim}
 
 Each script writes a sibling directory whose name is the script stem plus
@@ -509,7 +557,8 @@ columns are FD, Fresnel, and FD$-$Fresnel. The line-current columns are
 FDFD, Hankel, and FDFD$-$Hankel. Color limits of the first two
 columns match. The difference has its own scale. The cylinder outline, the
 slab faces, or the inner edge of the PML, is drawn on every panel. The open
-PEC cylinder draws the outline and that inner edge together.
+PEC cylinder and the open dielectric cylinder draw the outline and that
+inner edge together. The 3D cavity figure is one panel per pure mode.
 
 \subsection{Fresnel slab}
 \label{sec:ex-fresnel}
@@ -702,10 +751,90 @@ in the unstretched window, at least $2\Delta$ outside the circle.}
 \label{fig:pec-fields}
 \end{figure}
 
+\clearpage
+\subsection{Open dielectric cylinder}
+\label{sec:ex-diel}
+
+\begin{verbatim}
+python examples/fdfd/2d/dielectric_cylinder_open.py \
+    --radius 8 --index 1.5 --size 64 --dx 1 --pml 8
+\end{verbatim}
+
+The region is a square of side \texttt{--size}. \texttt{--index} is $n$,
+with $\varepsilon_r=n^2$. The default $n=1.5$ is $\varepsilon_r=2.25$.
+\texttt{--pml} is the cell count of the convolutional PML on each side,
+the stretch of Sec.~\ref{sec:pml}. $ka$ stays at 1. The solve frequency is
+$\omega=(ka/a)\,c_0$, and the Mie series uses
+$k=\omega\sqrt{\mu_0\varepsilon_0}$. The radius must lie inside the
+unstretched square. The default run writes
+\begin{center}
+\path{dielectric_cylinder_open_index1.5_ka1_a8_size64_dx1_pml8/}
+\end{center}
+with \texttt{domain.png} and \texttt{dielectric\_cylinder\_open.png}.
+
+The unknown is the scattered field. The operator holds the staircase disk.
+The impressed current is
+$J=j\omega(\varepsilon-\varepsilon_0)E_{\mathrm{inc}}$
+on the electric samples, and it is zero in the vacuum. The outer wall is a
+homogeneous PEC. A free sample of the total field is
+$E_s+E_{\mathrm{inc}}$. TMz shows $\mathrm{Re}\,E_z$. TEz shows
+$\mathrm{Re}\,H_z$ from \eqref{eq:h-from-e}. The annotated $L^2$ is the
+electric-sample error on the unstretched samples at least $2\Delta$ off
+the circle, inside and outside. On this grid those errors are $0.45\%$
+(TMz) and $0.71\%$ (TEz). The orange square is the inner edge of the PML.
+The closed-box cylinder of Sec.~\ref{sec:ex-cylinder} still prescribes the
+Mie trace and does not stretch the derivatives.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.72\textwidth]{../examples/fdfd/2d/dielectric_cylinder_open_index1.5_ka1_a8_size64_dx1_pml8/domain.png}
+\caption{Default open dielectric domain. The orange frame is the PML band
+used by the solve. The disk is the staircase dielectric, $n=1.5$.}
+\label{fig:diel-open-domain}
+\end{figure}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{../examples/fdfd/2d/dielectric_cylinder_open_index1.5_ka1_a8_size64_dx1_pml8/dielectric_cylinder_open.png}
+\caption{Open dielectric cylinder at $n=1.5$, $ka=1$, $a=8$, $\Delta=1$,
+with eight PML cells on each side. The annotated $L^2$ errors are the
+electric samples in the unstretched window, at least $2\Delta$ off the
+circle.}
+\label{fig:diel-open-fields}
+\end{figure}
+
+\subsection{3D PEC cavity}
+\label{sec:ex-cavity}
+
+\begin{verbatim}
+python examples/fdfd/3d/cavity.py --nx 16 --ny 12 --nz 10 --dx 1
+\end{verbatim}
+
+The box is a PEC cavity with one spacing on every axis. The default run
+writes
+\begin{center}
+\path{cavity_nx16_ny12_nz10_dx1/}
+\end{center}
+with \texttt{cavity.png}. The three panels are the pure modes $(1,1,0)$,
+$(1,0,1)$, and $(0,1,1)$. Each panel shows the one nonzero electric
+component, on the plane in which that mode varies. The script prints the
+relative Rayleigh residual of each mode on that grid. The regression in
+the test suite uses the coarser $8\times 6\times 5$ box and the bar
+$10^{-10}$.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{../examples/fdfd/3d/cavity_nx16_ny12_nz10_dx1/cavity.png}
+\caption{Pure modes of a $16\times 12\times 10$ PEC cavity at $\Delta=1$.
+$(1,1,0)$ is $E_z(x,y)$, $(1,0,1)$ is $E_y(x,z)$, and $(0,1,1)$ is
+$E_x(y,z)$.}
+\label{fig:cavity3d}
+\end{figure}
+
 \section{Tests and later slices}
 \label{sec:tests}
 
-The suite is \texttt{pytest} from the project root, forty-five tests in
+The suite is \texttt{pytest} from the project root, fifty-three tests in
 \texttt{tests/}. Milestone~1 checks the curls, the adjoint, the cavity
 eigenvalues, the manufactured solve, the invariant and the CFL growth, and
 the fully discrete dispersion, with relative or absolute bars from
@@ -723,17 +852,24 @@ above $0.5$, and a phasor error below $1.5\times 10^{-2}$ at $48$ steps
 per period. The conductor tests compare a PEC band with the shorter cavity
 it leaves, a PMC quarter-wave with the sine formula, and an open PEC
 cylinder with the Mie series. The eigenvalue bars are $10^{-10}$. The
-open-cylinder bars are $8\times 10^{-2}$ (TMz) and $10^{-1}$ (TEz), on
-the $64^2$ grid of Sec.~\ref{sec:ex-pec}. A failing bar is a reason to
-refine the grid in that test, not to widen the bar.
+open PEC bars are $8\times 10^{-2}$ (TMz) and $10^{-1}$ (TEz), on the
+$64^2$ grid of Sec.~\ref{sec:ex-pec}. The open dielectric bars, at
+$n=1.5$ on that same grid, are $8\times 10^{-3}$ (TMz) and
+$1.3\times 10^{-2}$ (TEz). That comparison keeps the unstretched samples
+at least $2\Delta$ off the rim, inside and outside the disk. The 3D
+curl bars are $10^{-12}$. On an $8\times 6\times 5$ PEC box the three
+pure modes match the semi-discrete frequency, with the $z$ term included,
+to $10^{-10}$. A manufactured solve on a $6\times 5\times 4$ box recovers
+the electric vector to the same bar. A failing
+bar is a reason to refine the grid in that test, not to widen the bar.
 
 The formulation note already fixes the formulas for the slices that remain
-to be coded: an open dielectric cylinder on the PML, the 3D cell, a
-resistive sheet, the symmetric GSTC cell, impressed beams, a near-to-far
-integral, and a Bloch phase. The Fresnel and dielectric-cylinder domain
-figures still draw an orange thickness as a layout. Those two solves use
-the Dirichlet trace. The open PEC cylinder of Sec.~\ref{sec:ex-pec} is the
-solve that stretches the derivatives.
+to be coded: a 3D sphere small enough to factor, a resistive sheet, the symmetric GSTC cell,
+impressed beams, a near-to-far integral, and a Bloch phase. The Fresnel
+and dielectric-cylinder domain figures still draw an orange thickness as
+a layout. Those two solves use the Dirichlet trace. The open PEC cylinder
+of Sec.~\ref{sec:ex-pec} and the open dielectric cylinder of
+Sec.~\ref{sec:ex-diel} are the solves that stretch the derivatives.
 
 \clearpage
 \begin{thebibliography}{9}

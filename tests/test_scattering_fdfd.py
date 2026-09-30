@@ -1,4 +1,9 @@
-"""Fresnel slab and dielectric cylinder posed as a Dirichlet trace on a PEC box."""
+"""Fresnel slab and dielectric cylinders.
+
+The closed box prescribes a Dirichlet trace on the PEC wall. The open
+cylinder drives the scattered field with a contrast current and absorbs
+that field in the convolutional PML.
+"""
 
 import numpy as np
 
@@ -12,7 +17,13 @@ from maxwell_fd.materials.volume import (
     StaircaseIsotropic,
     UniformIsotropic,
 )
-from maxwell_fd.utils.constants import C0, EPS0
+from maxwell_fd.operators.pml import PMLSpec
+from maxwell_fd.utils.constants import C0, EPS0, MU0
+
+# 64 cells, Δ = 1, a = 8, eight PML cells, ka = 1, n = 1.5.
+# Measured TMz 0.00449 and TEz 0.00709 on that grid.
+OPEN_DIELECTRIC_TMZ_BAR = 8.0e-3
+OPEN_DIELECTRIC_TEZ_BAR = 1.3e-2
 
 
 def test_fresnel_slab_converges_on_both_polarizations() -> None:
@@ -31,6 +42,13 @@ def test_dielectric_cylinder_matches_mie_off_the_staircase() -> None:
     for pol in (Polarization.TMZ, Polarization.TEZ):
         error = _cylinder_error(pol)
         assert error < 2.0e-2, f"{pol.value} relative L2 error {error}"
+
+
+def test_open_dielectric_cylinder_matches_mie() -> None:
+    tmz = _open_dielectric_error(Polarization.TMZ)
+    tez = _open_dielectric_error(Polarization.TEZ)
+    assert tmz < OPEN_DIELECTRIC_TMZ_BAR, tmz
+    assert tez < OPEN_DIELECTRIC_TEZ_BAR, tez
 
 
 def _fresnel_error(dx: float) -> dict[Polarization, float]:
@@ -159,3 +177,106 @@ def _relative(numerical: np.ndarray, exact: np.ndarray) -> float:
     if scale == 0.0:
         raise AssertionError("exact field on the comparison set is zero")
     return float(np.linalg.norm(numerical - exact) / scale)
+
+
+def _open_dielectric_error(pol: Polarization) -> float:
+    """Scattered field on the PML, driven by ``J = jω(ε−ε0) E_inc``."""
+    cells, dx, radius, pml_cells, ka, eps_r = 64, 1.0, 8.0, 8, 1.0, 2.25
+    length = cells * dx
+    center = (0.5 * length, 0.5 * length)
+    omega = (ka / radius) * C0
+    k = float(omega * np.sqrt(MU0 * EPS0))
+    grid = YeeGrid2D(cells, cells, dx, dx, pol, Boundary.PEC)
+    law = StaircaseIsotropic(
+        UniformIsotropic(),
+        (Disk(center[0], center[1], radius, eps=eps_r * EPS0),),
+    )
+    band = pml_cells * dx
+    if pol is Polarization.TMZ:
+        components = law.sample_tm(grid)
+        operator = FDFDOperator(grid, components, PMLSpec.box(pml_cells))
+        x, y = grid.coordinates("ez")
+        xx, yy = np.meshgrid(x, y, indexing="ij")
+        incident = np.exp(-1j * k * (xx - center[0]))
+        current = operator.layout.pack_e(
+            {"ez": 1j * omega * (components.eps_z - EPS0) * incident}
+        )
+        solved = operator.solve(omega, current)
+        total = incident.copy()
+        dof = operator.layout.e[0]
+        total[dof.i, dof.j] = solved + incident[dof.i, dof.j]
+        exact = cylinder_ez(xx, yy, k=k, radius=radius, eps_r=eps_r, center=center)
+        mask = _open_mask(xx, yy, length, band, center, radius, dx)
+        assert int(np.count_nonzero(mask)) > 100
+        return _relative(total[mask], exact[mask])
+    components = law.sample_te(grid)
+    operator = FDFDOperator(grid, components, PMLSpec.box(pml_cells))
+    ex_x, ex_y = grid.coordinates("ex")
+    ey_x, ey_y = grid.coordinates("ey")
+    ex_xx, ex_yy = np.meshgrid(ex_x, ex_y, indexing="ij")
+    ey_xx, ey_yy = np.meshgrid(ey_x, ey_y, indexing="ij")
+    ex_inc = np.zeros(grid.shapes()["ex"], dtype=np.complex128)
+    ey_inc = (k / (omega * EPS0)) * np.exp(-1j * k * (ey_xx - center[0]))
+    current = operator.layout.pack_e(
+        {
+            "ex": 1j * omega * (components.eps_x - EPS0) * ex_inc,
+            "ey": 1j * omega * (components.eps_y - EPS0) * ey_inc,
+        }
+    )
+    solved = operator.solve(omega, current)
+    n_ex = operator.layout.e[0].i.size
+    ex = ex_inc.copy()
+    ey = ey_inc.copy()
+    ex[operator.layout.e[0].i, operator.layout.e[0].j] = (
+        solved[:n_ex] + ex_inc[operator.layout.e[0].i, operator.layout.e[0].j]
+    )
+    ey[operator.layout.e[1].i, operator.layout.e[1].j] = (
+        solved[n_ex:] + ey_inc[operator.layout.e[1].i, operator.layout.e[1].j]
+    )
+    exact_ex, _exact_ey = cylinder_te_electric(
+        ex_xx,
+        ex_yy,
+        k=k,
+        radius=radius,
+        eps_r=eps_r,
+        omega=omega,
+        eps0=EPS0,
+        center=center,
+    )
+    _exact_ex, exact_ey = cylinder_te_electric(
+        ey_xx,
+        ey_yy,
+        k=k,
+        radius=radius,
+        eps_r=eps_r,
+        omega=omega,
+        eps0=EPS0,
+        center=center,
+    )
+    mask_ex = _open_mask(ex_xx, ex_yy, length, band, center, radius, dx)
+    mask_ey = _open_mask(ey_xx, ey_yy, length, band, center, radius, dx)
+    assert int(np.count_nonzero(mask_ex)) > 100
+    assert int(np.count_nonzero(mask_ey)) > 100
+    return _relative(
+        np.concatenate((ex[mask_ex], ey[mask_ey])),
+        np.concatenate((exact_ex[mask_ex], exact_ey[mask_ey])),
+    )
+
+
+def _open_mask(
+    xx: np.ndarray,
+    yy: np.ndarray,
+    length: float,
+    band: float,
+    center: tuple[float, float],
+    radius: float,
+    dx: float,
+) -> np.ndarray:
+    rho = np.hypot(xx - center[0], yy - center[1])
+    return (
+        (xx >= band)
+        & (xx <= length - band)
+        & (yy >= band)
+        & (yy <= length - band)
+        & (np.abs(rho - radius) >= 2.0 * dx)
+    )
