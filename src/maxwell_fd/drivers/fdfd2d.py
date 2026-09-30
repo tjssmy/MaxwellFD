@@ -14,8 +14,14 @@ Real ``ε`` and ``σ`` enter the diagonal as ``ε + σ/(jω)``, eq:eps-sigma.
 A complex ``ε(ω)`` replaces that sum and requires ``σ = 0``.
 
 ``spatial_operator`` returns the real pair ``(K, M)`` of eq. (4.2),
-``K e = ω² M e``, for lossless media. Conductivity and a complex
-permittivity stay in the driven system.
+``K e = ω² M e``, for lossless media. Conductivity, a complex permittivity,
+and a PML stay in the driven system. A PML multiplies each derivative by
+``1/s_w(ω)`` from eq:stretch. The curls are rebuilt at the solve frequency
+because that factor depends on ``ω``.
+
+Embedded PEC and PMC objects remove samples from that same unknown vector.
+PEC drops electric samples and PMC drops magnetic samples. The eigenproblem
+accepts the conductors. It still refuses a PML.
 """
 
 from __future__ import annotations
@@ -26,14 +32,17 @@ from scipy import sparse
 from scipy.sparse.linalg import spsolve
 
 from maxwell_fd.grid.yee2d import Polarization, YeeGrid2D
+from maxwell_fd.materials.conductors import Conductors
 from maxwell_fd.materials.volume import TEComponents, TMComponents
 from maxwell_fd.operators.curl2d import (
     CurlOperators,
+    CurlScale,
     Layout,
     array_curl_e,
     array_curl_h,
     build_curls,
 )
+from maxwell_fd.operators.pml import PMLProfile, PMLSpec
 
 ComplexArray = NDArray[np.complex128]
 RealArray = NDArray[np.float64]
@@ -43,11 +52,31 @@ class FDFDOperator:
     """Sparse curls plus the constitutive samples on the free degrees of freedom."""
 
     def __init__(
-        self, grid: YeeGrid2D, components: TMComponents | TEComponents
+        self,
+        grid: YeeGrid2D,
+        components: TMComponents | TEComponents,
+        pml: PMLSpec | None = None,
+        *,
+        conductors: Conductors | None = None,
     ) -> None:
         self.grid = grid
         self.components = components
-        self.operators: CurlOperators = build_curls(grid)
+        self.pml = pml
+        self.conductors = (
+            conductors if conductors is not None and conductors.active else None
+        )
+        self.profile: PMLProfile | None = None
+        if pml is not None and pml.active:
+            self.profile = PMLProfile(grid, pml)
+        self._fixed_e: dict[str, NDArray[np.bool_]] | None = None
+        self._fixed_h: dict[str, NDArray[np.bool_]] | None = None
+        if self.conductors is not None:
+            masks = self.conductors.masks(grid)
+            self._fixed_e = masks.pec
+            self._fixed_h = masks.pmc
+        self.operators: CurlOperators = build_curls(
+            grid, fixed_e=self._fixed_e, fixed_h=self._fixed_h
+        )
         self.layout: Layout = self.operators.layout
         self.eps_e, self.sigma_e, self.mu_h, self.eps_is_complex = _sample_diagonals(
             grid, components, self.layout
@@ -55,6 +84,8 @@ class FDFDOperator:
 
     def spatial_operator(self) -> tuple[sparse.csr_matrix, sparse.csr_matrix]:
         """``K`` and ``M`` of eq. (4.2), with real positive ``ε`` and ``μ``."""
+        if self.profile is not None:
+            raise ValueError("spatial eigenproblem uses the unstretched real curl")
         if self.eps_is_complex or np.any(self.sigma_e != 0.0):
             raise ValueError("spatial eigenproblem needs real eps and sigma = 0")
         if np.any(self.mu_h <= 0.0) or np.any(self.eps_e <= 0.0):
@@ -71,7 +102,8 @@ class FDFDOperator:
         permittivity = self._permittivity(omega)
         j_omega = 1j * float(omega)
         inv_j_omega_mu = sparse.diags(1.0 / (j_omega * self.mu_h))
-        curl_curl = self.operators.curl_h @ inv_j_omega_mu @ self.operators.curl_e
+        operators = self._operators(omega)
+        curl_curl = operators.curl_h @ inv_j_omega_mu @ operators.curl_e
         return (curl_curl + sparse.diags(j_omega * permittivity)).tocsr()
 
     def solve(
@@ -100,6 +132,19 @@ class FDFDOperator:
             1j * float(omega)
         )
 
+    def _operators(self, omega: float) -> CurlOperators:
+        scale = self._scale(omega)
+        if scale is None:
+            return self.operators
+        return build_curls(
+            self.grid, scale=scale, fixed_e=self._fixed_e, fixed_h=self._fixed_h
+        )
+
+    def _scale(self, omega: float) -> CurlScale | None:
+        if self.profile is None:
+            return None
+        return self.profile.scale(omega)
+
     def _dirichlet_load(
         self, omega: float, dirichlet: dict[str, NDArray]
     ) -> ComplexArray:
@@ -113,15 +158,38 @@ class FDFDOperator:
         self, omega: float, electric: dict[str, NDArray]
     ) -> dict[str, NDArray]:
         """Left-hand side of eq. (4.1) on the full electric arrays."""
+        scale = self._scale(omega)
         scaled = _scale_magnetic(
-            self.grid, array_curl_e(self.grid, electric), self.components, omega
+            self.grid,
+            array_curl_e(self.grid, electric, scale=scale),
+            self.components,
+            omega,
         )
-        ampere = array_curl_h(self.grid, scaled)
+        scaled = _zero_fixed(scaled, self._fixed_h)
+        ampere = array_curl_h(self.grid, scaled, scale=scale)
         permittivity = _permittivity_fields(self.components, omega, self.eps_is_complex)
         return {
             name: ampere[name] + 1j * float(omega) * permittivity[name] * electric[name]
             for name in ampere
         }
+
+
+def _zero_fixed(
+    fields: dict[str, NDArray], fixed: dict[str, NDArray[np.bool_]] | None
+) -> dict[str, NDArray]:
+    """Set PMC magnetic samples to zero so the array Ampere matches the sparse curl."""
+    if not fixed:
+        return fields
+    out: dict[str, NDArray] = {}
+    for name, values in fields.items():
+        mask = fixed.get(name)
+        if mask is None or not np.any(mask):
+            out[name] = values
+            continue
+        copied = np.array(values, copy=True)
+        copied[mask] = 0.0
+        out[name] = copied
+    return out
 
 
 def _boundary_only(

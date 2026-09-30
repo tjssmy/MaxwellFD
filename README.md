@@ -23,15 +23,15 @@ pip install -e .[dev]
 pytest
 ```
 
-Milestone 1 covers the 2D free-space Yee cell: curl signs, PEC cavity eigenvalues, a manufactured FDFD solve, the CFL limit, and a periodic standing wave. Milestone 2 adds staircase and mapped permittivities, Debye and Lorentz media, and Fresnel and dielectric-cylinder checks posed with a Dirichlet trace. PML, impedance sheets, and GSTC are specified in the note and are not in this slice.
+Milestone 1 covers the 2D free-space Yee cell: curl signs, PEC cavity eigenvalues, a manufactured FDFD solve, the CFL limit, and a periodic standing wave. Milestone 2 adds staircase and mapped permittivities, Debye and Lorentz media, and Fresnel and dielectric-cylinder checks posed with a Dirichlet trace. The convolutional PML stretches the derivatives on a PEC-backed band, in both drivers. Embedded PEC and PMC objects remove Yee samples, and an open PEC cylinder checks that reduction against the Mie series on the PML. Impedance sheets and GSTC are specified in the note and are not in this slice.
 
 ## Layout
 
 ```
 src/maxwell_fd/
   grid/            YeeGrid2D
-  materials/       Uniform, staircase, mapped, Debye, and Lorentz laws
-  operators/       curl_e, curl_h
+  materials/       Uniform, staircase, mapped, Debye, Lorentz, and conductor masks
+  operators/       curl_e, curl_h, and the convolutional PML
   drivers/         FDTD step and FDFD sparse solve
-  analytics/       cavity frequencies, leapfrog dispersion, Fresnel, Mie
+  analytics/       cavity frequencies, leapfrog dispersion, Fresnel, Mie, line current
 ```

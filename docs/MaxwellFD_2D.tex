@@ -41,10 +41,13 @@ material sampling, and one pair of discrete curls feed both a leapfrog
 (FDTD) and a sparse frequency-domain system (FDFD). Phasors use
 $e^{j\omega t}$, the same convention as MaxwellMOM. This note describes the
 physics and the method that are actually coded, how the package is
-organized, and how the Fresnel-slab and dielectric-cylinder examples are
-run and drawn. The equation reference, including the PML, the resistive
-sheet, and the GSTC cell, is \texttt{FD\_LaTeX\_Reference.tex}. Those three
-items are specified there and are not in the operators.
+organized, and how the Fresnel-slab, dielectric-cylinder, PML
+line-current, and open PEC-cylinder examples are run and drawn. The
+equation reference is \texttt{FD\_LaTeX\_Reference.tex}. The convolutional
+PML from that note is coded as a stretch of the normal derivatives on a
+PEC-backed band. Embedded PEC and PMC objects remove Yee samples, and an
+open PEC cylinder is compared with the Mie series on that band. The
+resistive sheet and the GSTC cell remain specified in that note.
 \end{abstract}
 
 \tableofcontents
@@ -53,7 +56,7 @@ items are specified there and are not in the operators.
 \section{Status}
 \label{sec:status}
 
-Version 0.1.0 contains two slices.
+Version 0.1.0 contains the following.
 
 \begin{enumerate}
 \item The 2D cell in free space and in a uniform isotropic medium: TMz and
@@ -65,12 +68,22 @@ $\varepsilon(\omega)$. FDTD adds one bulk Debye pole or one bulk Lorentz
 pole through a polarization current. The closed-box checks are a Fresnel
 slab and a dielectric cylinder, both driven by an analytic Dirichlet trace
 on the existing PEC wall.
+\item The convolutional PML on a PEC-backed band, for both polarizations
+and both drivers. In FDFD every derivative carries the factor
+$1/s_w(\omega)$. The leapfrog keeps one auxiliary for each of those
+derivatives. A line current is compared with the outgoing Hankel function
+on the unstretched samples.
+\item Embedded PEC and PMC objects. PEC drops every electric sample inside
+its region. PMC drops every magnetic sample. The open check is a PEC
+cylinder: the unknown is the scattered field, the object carries the trace
+$-E_{\mathrm{inc}}$, and the PML absorbs the outgoing wave.
 \end{enumerate}
 
 MaxwellFD does not import MaxwellMOM. The shared pieces are the time
 convention, the four SI constants, and the analytic targets used as
-external checks. There is no 3D grid, no total-field/scattered-field
-boundary, no embedded PEC or PMC object, and no sheet unknown.
+external checks. There is no 3D grid and no sheet unknown. Embedded PEC
+and PMC objects remove Yee samples. The open PEC cylinder is a
+scattered-field solve on the PML.
 
 \section{Physics}
 \label{sec:physics}
@@ -106,10 +119,12 @@ On a PEC wall the tangential electric field is the boundary value stored
 with the grid. Milestone~1 sets that value to zero. The slab and the
 cylinder instead prescribe the analytic tangential trace and leave the
 impressed current at zero. A periodic wall identifies opposite faces with
-phase one. PMC, a stretched-coordinate PML, and a resistive or GSTC sheet
-are written in the formulation note and are not boundary kinds in
-\texttt{YeeGrid2D}. The grid accepts \texttt{Boundary.PEC} and
-\texttt{Boundary.PERIODIC} only.
+phase one. \texttt{YeeGrid2D} accepts \texttt{Boundary.PEC} and
+\texttt{Boundary.PERIODIC} only. A PML is the stretch of
+Sec.~\ref{sec:pml} on a band inside that PEC wall. A resistive or GSTC
+sheet remains in the formulation note. An embedded PMC is a mask on
+magnetic samples inside the grid. The outer wall is still
+\texttt{Boundary.PEC} or \texttt{Boundary.PERIODIC}.
 
 \subsection{Staircase media}
 \label{sec:staircase}
@@ -268,8 +283,76 @@ The free-row action is the array form of the left-hand side of the FDFD
 equation. Calling \texttt{solve} with no trace, or with a zero trace, is
 the milestone-1 solve. The slab and the cylinder pass \texttt{dirichlet}
 set to the analytic boundary field and set $\mathrm{j}=0$. This closes the
-box with a prescribed trace. It does not stretch a coordinate and it does
-not add auxiliary fields.
+box with a prescribed trace. The slab and the cylinder use that trace.
+The stretch that absorbs an outgoing wave is the next subsection.
+
+\subsection{Convolutional PML}
+\label{sec:pml}
+
+An open side is a band of cells inside the PEC grid. The outer sample stays
+on the PEC wall, and depth $\rho$ is measured from the inner face of the
+band toward that wall. The face itself, $\rho=0$, is unstretched. On an
+axis $w$,
+\begin{equation}
+s_w = \kappa_w + \frac{\sigma_w}{\alpha_w + j\omega\varepsilon_0},
+\label{eq:pml-s}
+\end{equation}
+and the centered difference that approximates $\partial_w$ is multiplied by
+$s_w^{-1}$ at the sample where that difference sits. Electric and magnetic
+samples lie half a cell apart, so the two curls carry different scales and
+the stretched pair is not a transpose. With every thickness zero the scale
+is absent, and the curls remain the real transpose of Sec.~\ref{sec:curls}.
+
+Inside a band of thickness $d$, with polynomial order $m$,
+\begin{equation}
+\sigma = \sigma_{\max}\left(\frac{\rho}{d}\right)^m,
+\qquad
+\sigma_{\max} = -\frac{(m+1)\ln R(0)}{2\eta_0 d},
+\label{eq:pml-sigma}
+\end{equation}
+together with $\kappa=1+(\kappa_{\max}-1)(\rho/d)^m$ and
+$\alpha=\alpha_{\max}(1-\rho/d)^m$. The defaults are $m=3$,
+$R(0)=10^{-6}$, $\kappa_{\max}=1$, and $\alpha_{\max}=0$. Each side uses
+its own thickness, the cell count times the spacing on that axis. A node on the PEC wall has $\rho=d$, so $\sigma=\sigma_{\max}$,
+$\kappa=\kappa_{\max}$, and $\alpha=0$. \texttt{PMLSpec.box} puts the same
+cell count on all four sides. A periodic grid is rejected: the band needs
+the PEC backing.
+
+FDFD rebuilds the sparse curls at the solve frequency, since $s_w$ depends
+on $\omega$. The eigenproblem keeps the unstretched real curl, and
+\texttt{spatial\_operator} refuses an active PML.
+
+The leapfrog stores one auxiliary per stretched derivative. It advances
+that auxiliary with the exponential integrator of $1/s_w$, on the same
+$\Delta t$ as the field step. $C_a$ and $C_b$ stay on the material
+samples. A Debye or Lorentz callback still receives
+$\nabla\times\mathbf{H}$ after the magnetic update, and that curl is the
+stretched one. With no PML object, both drivers stay on the milestone-1
+update.
+
+\subsection{Embedded conductors}
+\label{sec:conductors}
+
+PEC and PMC are sample masks. Setting $\varepsilon$ to infinity, or $\mu$
+to zero, is a different model. PEC removes every electric sample whose own
+coordinate lies in the object. PMC removes every magnetic sample in its
+region. The leapfrog writes those samples back to zero: PEC electric
+samples together with the outer wall, and PMC magnetic samples after the
+magnetic update, before Ampere's law reads them. The eigenproblem uses
+that reduced real curl. It still refuses an active PML.
+
+The regions use the staircase tests of Sec.~\ref{sec:staircase}. A band is
+the half-open interval $y_0\le y<y_1$. A circle is closed, so a sample on
+the circle is inside. The outer wall stays \texttt{Boundary.PEC} or
+\texttt{Boundary.PERIODIC}.
+
+The open PEC cylinder solves for the scattered field on the PML of
+Sec.~\ref{sec:pml}. The trace in \eqref{eq:dirichlet} equals
+$-E_{\mathrm{inc}}$ on the object and zero on the outer wall. A free
+sample of the total field is $E_s+E_{\mathrm{inc}}$. Inside the object the
+total electric field is zero. The TEz incident wave is
+$H_z=e^{-jk(x-x_c)}$, with $E_x=0$ and
+$E_y=(k/\omega\varepsilon_0)\,H_z$.
 
 \subsection{Analytic checks}
 \label{sec:analytics}
@@ -304,10 +387,23 @@ Jacobi--Anger coefficients $(-j)^n$. TMz is the $E_z$ series. TEz is the
 $H_z$ series, with the contrast on the undifferentiated interior Bessel
 function, because $E_\varphi$ brings $1/\varepsilon$. The PEC coefficient
 $a_n=-(-j)^n J_n(ka)/H_n^{(2)}(ka)$ is a separate regression. It is not the
-limit $\varepsilon_r\to\infty$ of the dielectric formula. The truncation
+limit $\varepsilon_r\to\infty$ of the dielectric formula. The TEz form,
+from $E_\varphi=0$, is
+$a_n=-(-j)^n J_n'(ka)/H_n^{(2)\prime}(ka)$. The truncation
 follows the MaxwellMOM rule
 $\lceil |ka|+4|ka|^{1/3}+8\rceil$, and the derivative is the recurrence
 $\tfrac12(f_{n-1}-f_{n+1})$.
+
+\paragraph{Line current.}
+A $z$-directed current whose integral is $I$ satisfies
+$(\nabla^2+k^2)E_z=j\omega\mu J_z$ in a uniform medium. For $e^{+j\omega t}$
+the outgoing field is
+$E_z=-(\omega\mu I/4)\,H_0^{(2)}(k\rho)$, with
+$k=\omega\sqrt{\mu\varepsilon}$ taken from the same $\mu$ and $\varepsilon$
+the solver uses. The discrete sample is $J_z=I/(\Delta x\Delta y)$. The
+comparison keeps the unstretched samples at least $\lambda/2$ from the
+source. The continuous field diverges at $\rho=0$, and that sample is left
+undefined.
 
 \section{Code}
 \label{sec:code}
@@ -329,8 +425,12 @@ Module & Role\\
 & Uniform, staircase, mapped $\varepsilon(x,y)$, component arrays\\
 \texttt{materials.dispersion}
 & \texttt{DebyeDielectric}, \texttt{LorentzDielectric}, and their auxiliaries\\
+\texttt{materials.conductors}
+& Staircase PEC and PMC masks, \texttt{YBand} and \texttt{Circle}\\
 \texttt{operators.curl2d}
-& Sparse \texttt{curl\_e}, \texttt{curl\_h}, array curls, DOF layout\\
+& Sparse \texttt{curl\_e}, \texttt{curl\_h}, array curls, DOF layout, optional stretch\\
+\texttt{operators.pml}
+& CFS profile, $1/s_w(\omega)$, and the leapfrog auxiliaries\\
 \texttt{drivers.fdtd2d}
 & \texttt{step\_tmz}, \texttt{step\_tez}, CFL step, leapfrog invariant\\
 \texttt{drivers.fdfd2d}
@@ -343,6 +443,8 @@ Module & Role\\
 & Slab coefficients and fields\\
 \texttt{analytics.mie2d}
 & Cylinder coefficients and $E_z$, $H_z$, $E_x$, $E_y$\\
+\texttt{analytics.green2d}
+& Outgoing line-current $E_z$\\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -366,11 +468,16 @@ return the real instantaneous coefficients used by the leapfrog
 ($\varepsilon_\infty$ when the law is dispersive). Passing $\omega$ allows
 a complex permittivity. \texttt{step\_tmz} and \texttt{step\_tez} take the
 impressed current and the polarization current as optional arguments. Their
-defaults reproduce the milestone-1 update.
+defaults reproduce the milestone-1 update. The same two steps take an
+optional \texttt{ConvolutionalPML} and an optional \texttt{Conductors}
+mask. \texttt{FDFDOperator} takes an optional \texttt{PMLSpec} and the same
+mask. Passing neither a PML nor a conductor leaves both drivers on the full
+unstretched curls.
 
-The real eigenproblem is \texttt{spatial\_operator}, which returns the pair
-$(K,M)$. TEz results should drop nonpositive eigenvalues before they are
-compared with the semi-discrete formula.
+The real eigenproblem is \texttt{spatial\_operator}. It returns the pair
+$(K,M)$ of the unstretched curl and refuses an active PML. TEz results
+should drop nonpositive eigenvalues before they are compared with the
+semi-discrete formula.
 
 \section{Examples}
 \label{sec:examples}
@@ -384,6 +491,8 @@ conda environment \texttt{maxwell-fd} active,
 \begin{verbatim}
 python examples/fdfd/2d/fresnel_slab.py
 python examples/fdfd/2d/dielectric_cylinder.py
+python examples/fdfd/2d/pml_line.py
+python examples/fdfd/2d/pec_cylinder.py
 \end{verbatim}
 
 Each script writes a sibling directory whose name is the script stem plus
@@ -396,9 +505,11 @@ underscores.
 Field maps use \texttt{pcolormesh} with Gouraud shading. Each polarization
 is a row of three columns: the Yee field, the analytic field, and their
 difference. The cylinder columns are FD, Mie, and FD$-$Mie. The slab
-columns are FD, Fresnel, and FD$-$Fresnel. Color limits of the first two
-columns match. The difference has its own scale. The cylinder outline, or
-the slab faces, is drawn on every panel.
+columns are FD, Fresnel, and FD$-$Fresnel. The line-current columns are
+FDFD, Hankel, and FDFD$-$Hankel. Color limits of the first two
+columns match. The difference has its own scale. The cylinder outline, the
+slab faces, or the inner edge of the PML, is drawn on every panel. The open
+PEC cylinder draws the outline and that inner edge together.
 
 \subsection{Fresnel slab}
 \label{sec:ex-fresnel}
@@ -441,9 +552,11 @@ $x=0$ and $x=a$ are drawn in green and labeled as the PEC trace: every
 boundary electric sample on those walls is set to the analytic Fresnel
 value, together with the samples on $y=0$ and $y=b$. The slab rectangle
 spans the full width in $x$. Figure~\ref{fig:fresnel-domain} is that
-layout. Nothing in \texttt{FDFDOperator} stretches a coordinate. The orange
-bands document where a later PML would close the propagation direction.
-They are not absorbing layers in this solve.
+layout. The orange bands mark a drawn thickness at $y=0$ and $y=b$.
+\texttt{FDFDOperator} is constructed here without a \texttt{PMLSpec}, so
+every derivative stays the centered difference of Sec.~\ref{sec:curls} and
+the trace is the analytic field. The stretch itself is the line-current
+example of Sec.~\ref{sec:ex-pml}.
 
 \begin{figure}[ht]
 \centering
@@ -484,7 +597,8 @@ The cylinder scatters in the plane of the grid, so the domain figure draws
 the PML thickness on all four sides. As in the slab example, that frame is
 a layout. The solve is still \eqref{eq:dirichlet} on the PEC wall, with the
 Mie field as the trace and with the staircase disk as the only material
-contrast. TMz shows $\mathrm{Re}\,E_z$. TEz shows $\mathrm{Re}\,H_z$ from
+contrast. Every derivative in this solve is the centered difference of
+Sec.~\ref{sec:curls}. TMz shows $\mathrm{Re}\,E_z$. TEz shows $\mathrm{Re}\,H_z$ from
 \eqref{eq:h-from-e}, and the annotated $L^2$ error is the free-sample error
 in $E_x$ and $E_y$. On the default grid those errors are $0.44\%$ and
 $2.07\%$.
@@ -505,10 +619,93 @@ solve remains the PEC trace.}
 \label{fig:cyl-fields}
 \end{figure}
 
+\clearpage
+\subsection{Line current in a PML}
+\label{sec:ex-pml}
+
+\begin{verbatim}
+python examples/fdfd/2d/pml_line.py \
+    --wavelength 1 --side 3 --dx 0.05 --pml 8
+\end{verbatim}
+
+The domain is a square PEC box of side \texttt{--side}. \texttt{--dx} is
+the cell size, and \texttt{--side} must be an integer number of those
+cells, at least two. \texttt{--pml} is the cell count on every side. It is
+at least one, and twice that count stays below the number of cells, so an
+interior remains. \texttt{--wavelength} is the free-space wavelength. The
+source is the center $E_z$ sample, $J_z=1/(\Delta x\,\Delta y)$, and the
+reference is the line current of Sec.~\ref{sec:analytics} with $I=1$. The
+default run writes
+\begin{center}
+\path{pml_line_lam1_side3_dx0.05_pml8/}
+\end{center}
+and \texttt{pml\_line.png}. The orange square is the inner edge of the
+band. On this grid the interior $L^2$ error, outside half a wavelength of
+the source, is $2.10\%$. That number belongs to this grid. The Hankel panel
+is the unbounded cylindrical wave, including through the band, so the
+difference outside the square is the absorption.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{../examples/fdfd/2d/pml_line_lam1_side3_dx0.05_pml8/pml_line.png}
+\caption{Line current at $\lambda=1$ on a $3\,\mathrm{m}$ box,
+$\Delta=0.05\,\mathrm{m}$, with eight PML cells on each side. The orange
+square is the inner edge of the band. The annotated error is the interior
+window described above.}
+\label{fig:pml-line}
+\end{figure}
+
+\clearpage
+\subsection{Open PEC cylinder}
+\label{sec:ex-pec}
+
+\begin{verbatim}
+python examples/fdfd/2d/pec_cylinder.py \
+    --radius 8 --size 64 --dx 1 --pml 8
+\end{verbatim}
+
+The region is a square of side \texttt{--size}. \texttt{--pml} is the cell
+count of the convolutional PML on each side, the stretch of
+Sec.~\ref{sec:pml}. $ka$ stays at 1. The solve frequency is
+$\omega=c_0/a$, and the Mie series uses
+$k=\omega\sqrt{\mu_0\varepsilon_0}$. The radius must lie inside the
+unstretched square. The default run writes
+\begin{center}
+\path{pec_cylinder_ka1_a8_size64_dx1_pml8/}
+\end{center}
+with \texttt{domain.png} and \texttt{pec\_cylinder.png}.
+
+The unknown is the scattered field. The cylinder trace is
+$-E_{\mathrm{inc}}$ and the outer wall is zero. A free sample of the total
+field is $E_s+E_{\mathrm{inc}}$. TMz shows $\mathrm{Re}\,E_z$. TEz shows
+$\mathrm{Re}\,H_z$ from \eqref{eq:h-from-e}. The annotated $L^2$ is the
+electric-sample error on the unstretched samples at least $2\Delta$
+outside the circle. On this grid those errors are $4.20\%$ (TMz) and
+$5.58\%$ (TEz). The orange square is the inner edge of the PML. Outside
+that square the difference is the absorption together with the scattered
+field's wall condition.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.72\textwidth]{../examples/fdfd/2d/pec_cylinder_ka1_a8_size64_dx1_pml8/domain.png}
+\caption{Default open-cylinder domain. The orange frame is the PML band
+used by the solve. The disk is the staircase PEC.}
+\label{fig:pec-domain}
+\end{figure}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{../examples/fdfd/2d/pec_cylinder_ka1_a8_size64_dx1_pml8/pec_cylinder.png}
+\caption{Open PEC cylinder at $ka=1$, $a=8$, $\Delta=1$, with eight PML
+cells on each side. The annotated $L^2$ errors are the electric samples
+in the unstretched window, at least $2\Delta$ outside the circle.}
+\label{fig:pec-fields}
+\end{figure}
+
 \section{Tests and later slices}
 \label{sec:tests}
 
-The suite is \texttt{pytest} from the project root, twenty-five tests in
+The suite is \texttt{pytest} from the project root, forty-five tests in
 \texttt{tests/}. Milestone~1 checks the curls, the adjoint, the cavity
 eigenvalues, the manufactured solve, the invariant and the CFL growth, and
 the fully discrete dispersion, with relative or absolute bars from
@@ -517,16 +714,28 @@ the manufactured solve with $\sigma>0$ and with a smooth
 $\varepsilon(x,y)$, a uniform $\varepsilon_r=4$ cavity, the slab-loaded
 cavity, the lossless staircase invariant, Fresnel face continuity, the Mie
 continuity and PEC coefficient, the Fresnel and cylinder $L^2$ bars of
-$2\times 10^{-2}$, and one period of Debye and Lorentz evolution. A failing
-bar is a reason to refine the grid in that test, not to widen the bar.
+$2\times 10^{-2}$, and one period of Debye and Lorentz evolution. The PML
+tests check the grading, the stretched curls, a zero-thickness step, the
+line current, and the leapfrog phasor. The formulation note records those
+bars: a coarse interior error below $4\times 10^{-2}$, a $2.5\times$ drop
+when the spacing is halved on the same physical band, a bare PEC window
+above $0.5$, and a phasor error below $1.5\times 10^{-2}$ at $48$ steps
+per period. The conductor tests compare a PEC band with the shorter cavity
+it leaves, a PMC quarter-wave with the sine formula, and an open PEC
+cylinder with the Mie series. The eigenvalue bars are $10^{-10}$. The
+open-cylinder bars are $8\times 10^{-2}$ (TMz) and $10^{-1}$ (TEz), on
+the $64^2$ grid of Sec.~\ref{sec:ex-pec}. A failing bar is a reason to
+refine the grid in that test, not to widen the bar.
 
-The formulation note already fixes the formulas for the slices that are not
-coded: the convolutional PML, embedded PEC and PMC, open-region Mie, the 3D
-cell, a resistive sheet, the symmetric GSTC cell, impressed beams, a
-near-to-far integral, and a Bloch phase. The example domain figures are the
-picture of where the $y$-end PML, or the four-sided PML, will sit. They do
-not implement the stretch.
+The formulation note already fixes the formulas for the slices that remain
+to be coded: an open dielectric cylinder on the PML, the 3D cell, a
+resistive sheet, the symmetric GSTC cell, impressed beams, a near-to-far
+integral, and a Bloch phase. The Fresnel and dielectric-cylinder domain
+figures still draw an orange thickness as a layout. Those two solves use
+the Dirichlet trace. The open PEC cylinder of Sec.~\ref{sec:ex-pec} is the
+solve that stretches the derivatives.
 
+\clearpage
 \begin{thebibliography}{9}
 \bibitem{yee1966}
 K.~S. Yee, ``Numerical solution of initial boundary value problems

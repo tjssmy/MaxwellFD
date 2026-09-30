@@ -4,7 +4,14 @@ import numpy as np
 from scipy.special import hankel2, jv
 
 from maxwell_fd.analytics.fresnel import slab_coefficients, slab_fields
-from maxwell_fd.analytics.mie2d import pec_tmz_coefficient, radial_limits
+from maxwell_fd.analytics.mie2d import (
+    bessel_derivative,
+    pec_coefficient,
+    pec_cylinder_ez,
+    pec_cylinder_hz,
+    pec_tmz_coefficient,
+    radial_limits,
+)
 from maxwell_fd.utils.constants import C0, EPS0, MU0
 
 
@@ -80,3 +87,38 @@ def test_mie_tangential_field_is_continuous_and_pec_coefficient_matches() -> Non
     np.testing.assert_allclose(
         pec_tmz_coefficient(ka, orders), direct, rtol=1e-12, atol=1e-12
     )
+
+
+def test_pec_te_coefficient_is_the_derivative_ratio() -> None:
+    ka = 1.3
+    orders = np.arange(-6, 7)
+    direct = (
+        -((-1j) ** orders)
+        * bessel_derivative(orders, ka, hankel=False)
+        / bessel_derivative(orders, ka, hankel=True)
+    )
+    np.testing.assert_allclose(
+        pec_coefficient(ka, orders, te=True), direct, rtol=1e-12, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        pec_coefficient(ka, orders, te=False),
+        pec_tmz_coefficient(ka, orders),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    radius = 1.7
+    phi = 0.4
+    x = np.array([radius * np.cos(phi)])
+    y = np.array([radius * np.sin(phi)])
+    np.testing.assert_allclose(
+        pec_cylinder_ez(x, y, k=1.0, radius=radius), 0.0, atol=1e-8
+    )
+    step = 1e-6
+    hz_on = pec_cylinder_hz(x, y, k=1.0, radius=radius)
+    x_out = np.array([(radius + step) * np.cos(phi)])
+    y_out = np.array([(radius + step) * np.sin(phi)])
+    hz_out = pec_cylinder_hz(x_out, y_out, k=1.0, radius=radius)
+    np.testing.assert_allclose((hz_out - hz_on) / step, 0.0, atol=1e-5)
+    origin = np.array([0.0])
+    assert pec_cylinder_ez(origin, origin, k=1.0, radius=radius)[0] == 0.0
+    assert pec_cylinder_hz(origin, origin, k=1.0, radius=radius)[0] == 0.0

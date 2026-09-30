@@ -120,7 +120,7 @@ On a PEC wall the tangential electric field is zero. On a PMC wall the
 tangential magnetic field is zero. A periodic wall identifies the two opposite
 faces, optionally with a Bloch phase $e^{-j\mathbf{k}_B\cdot\mathbf{L}}$ in a
 later slice; milestone~1 uses a phase of one. An open boundary is a PML,
-written in Sec.~\ref{sec:pml} and not coded yet.
+the stretch of Sec.~\ref{sec:pml}.
 
 \section{Discretization}
 \label{sec:discretization}
@@ -417,8 +417,10 @@ grows from 1 at the inner face to a modest $\kappa_{\max}$, and $\alpha_w$
 falls from a small positive value at the inner face to zero at the outer PEC
 backing. The time-domain scheme adds one auxiliary per stretched derivative
 and integrates~\eqref{eq:stretch-inv} with the same $\Delta t$ as the
-leapfrog. This section is the specification for that slice. The milestone-1
-stepper has no PML.
+leapfrog. \texttt{operators.pml} is that stretch, on a PEC-backed band, in
+both drivers. A solve with no PML object is the milestone-1 stepper. The
+regression compares a line current with the outgoing $H_0^{(2)}$ field on
+the unstretched samples.
 
 \section{Linear algebra and thin sheets}
 \label{sec:algebra}
@@ -519,6 +521,16 @@ The free rows of $A\mathrm{e}_D$ are the array form of the left-hand side
 of~\eqref{eq:fdfd}. A zero trace is the milestone-1 solve. This is how the
 slab and cylinder comparisons are posed. It is not a PML.
 
+An embedded PEC uses the same omission on every electric sample whose
+coordinate lies inside the object. An embedded PMC omits the magnetic
+samples in its region, so the tangential $H$ on a staircase face is zero
+and the magnetic samples of a solid interior leave the unknown vector.
+Both are masks on the Yee locations. Setting $\varepsilon$ to infinity, or
+$\mu$ to zero, is a different model. The open PEC cylinder puts
+$e_D=-E_{\mathrm{inc}}$ on the object and $e_D=0$ on the outer wall, and
+the PML absorbs the scattered field. Inside the object the total electric
+field is zero.
+
 \section{Validation}
 \label{sec:validation}
 
@@ -575,6 +587,56 @@ Lossless staircase invariant & 1 percent & $W^n$ over 500 steps at half the CFL 
 Fresnel slab, both polarizations & $2\cdot 10^{-2}$ relative & Free samples; halving $\Delta$ drops the error by $2.5\times$\\
 Dielectric cylinder, both polarizations & $2\cdot 10^{-2}$ relative & Samples $2\Delta$ off the circle and the wall\\
 Debye and Lorentz, one period & $3\cdot 10^{-3}$ relative & Leapfrog against the complex-$\varepsilon$ phasor\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The convolutional PML is checked apart from those Dirichlet rows. The
+profile row is the grading of Sec.~\ref{sec:pml}. The line-current rows
+compare $E_z$ of a unit line current with the outgoing $H_0^{(2)}$ field
+on the unstretched samples at least $\lambda/2$ from the source. Halving
+the spacing keeps the same physical band. The bare-box row uses that same
+window with the thicknesses set to zero. The leapfrog row is a one-period
+transform, after the transient, against the FDFD phasor at $48$ steps per
+period.
+
+\begin{center}
+\small
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{5.0cm}>{\raggedright\arraybackslash}p{3.5cm}>{\raggedright\arraybackslash}p{6.2cm}@{}}
+\toprule
+Check & Bar & What is compared\\
+\midrule
+CFS profile & $10^{-12}$ relative & $\sigma$, $\kappa$, $\alpha$ on the node and midpoint lines\\
+Stretched curls, both polarizations & $10^{-12}$ relative & Sparse pair versus the array curls\\
+Zero-thickness PML step & exact match & Unstretched leapfrog, both polarizations\\
+Line current, coarse band & $4\cdot 10^{-2}$ relative & Interior $E_z$ versus $H_0^{(2)}$\\
+Line current, refined band & $2.5\times$ smaller & Same physical band, half the spacing\\
+Bare PEC window & above $0.5$ relative & Those interior samples, with no stretch\\
+Leapfrog phasor, both polarizations & $1.5\cdot 10^{-2}$ relative & $48$ steps per period versus FDFD\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Embedded conductors are checked on the reduced curl. A PEC band that fills
+$y\ge b_{\mathrm{short}}$ on a taller grid leaves the spectrum of a PEC
+cavity of height $b_{\mathrm{short}}$. A PMC band whose lower edge sits on
+an $H_x$ row, $y=(J+\tfrac12)\Delta y$, leaves the TMz quarter-wave
+$k_y=(n+\tfrac12)\pi/y_{\mathrm{face}}$. Decoupled electric samples above
+that cut are zero eigenvalues and are dropped before the comparison. The
+open PEC rows use a $64\times 64$ grid with $\Delta=1$, $a=8$, eight PML
+cells, and $ka=1$. The series takes $k=\omega\sqrt{\mu_0\varepsilon_0}$.
+The window is the unstretched samples with $\rho\ge a+2\Delta$.
+
+\begin{center}
+\small
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{5.0cm}>{\raggedright\arraybackslash}p{3.5cm}>{\raggedright\arraybackslash}p{6.2cm}@{}}
+\toprule
+Check & Bar & What is compared\\
+\midrule
+PEC band, both polarizations & $10^{-10}$ relative & Shortened cavity versus~\eqref{eq:semi}\\
+PMC quarter-wave, TMz & $10^{-10}$ relative & Lowest positive eigenvalue, $k_y=\pi/(2y_{\mathrm{face}})$\\
+Open PEC cylinder, TMz & $8\cdot 10^{-2}$ relative & $E_z$ on the window above\\
+Open PEC cylinder, TEz & $10^{-1}$ relative & $E_x$ and $E_y$ on that window\\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -662,14 +724,17 @@ a_n = (-j)^n
 \end{equation}
 The PEC reduction used as a regression is the separate coefficient
 $a_n=-(-j)^n J_n(\alpha)/H_n^{(2)}(\alpha)$, not the limit
-$\varepsilon_r\to\infty$ of~\eqref{eq:mie-tm}.
+$\varepsilon_r\to\infty$ of~\eqref{eq:mie-tm}. The TEz form, from
+$E_\varphi=0$, is
+$a_n=-(-j)^n J_n'(\alpha)/H_n^{(2)\prime}(\alpha)$.
 
-Later slices add comparisons that this note already fixes the formulas for,
-and that the code does not yet run:
+The open PEC cylinder is the scattered-field pair in the conductor table
+above. Later slices add comparisons that this note already fixes the
+formulas for, and that the code does not yet run:
 
 \begin{itemize}
-\item an open PEC or dielectric cylinder against Mie once the PML of
-Sec.~\ref{sec:pml} is in;
+\item an open dielectric cylinder against Mie, on the PML of
+Sec.~\ref{sec:pml};
 \item a 3D rectangular cavity, then a sphere against the Mie series, at a
 size~\eqref{eq:fdfd} can still factor;
 \item a resistive sheet against~\eqref{eq:zs} and against one MaxwellMOM
@@ -887,15 +952,17 @@ Module & Responsibility\\
 \texttt{grid.yee2d} & Counts, spacings, polarization, boundary, shapes, coordinates\\
 \texttt{materials.volume} & Uniform, staircase, and mapped $\varepsilon,\mu,\sigma$\\
 \texttt{materials.dispersion} & Debye and Lorentz laws, auxiliaries $J_p$\\
-\texttt{operators.curl2d} & \texttt{curl\_e}, \texttt{curl\_h}, array curls, DOF order\\
+\texttt{materials.conductors} & Staircase PEC and PMC masks\\
+\texttt{operators.curl2d} & \texttt{curl\_e}, \texttt{curl\_h}, array curls, DOF order, optional $1/s_w$\\
+\texttt{operators.pml} & Stretch~\eqref{eq:stretch}--\eqref{eq:sigma-max} and the leapfrog auxiliary\\
 \texttt{drivers.fdtd2d} & Leapfrog step, $J$ and $J_p$, invariant~\eqref{eq:invariant}\\
 \texttt{drivers.fdfd2d} & System~\eqref{eq:fdfd}, Dirichlet lift, sparse solve\\
 \texttt{analytics.cavity2d} & Frequency~\eqref{eq:semi} and mode shapes~\eqref{eq:mode-tm}, \eqref{eq:mode-te}\\
 \texttt{analytics.dispersion} & Frequency~\eqref{eq:discrete} and the three-sample recurrence\\
 \texttt{analytics.fresnel} & Slab fields~\eqref{eq:fresnel-field}, \eqref{eq:fresnel-te}\\
 \texttt{analytics.mie2d} & Cylinder series~\eqref{eq:mie-tm}, \eqref{eq:mie-te}\\
+\texttt{analytics.green2d} & Outgoing line current, $H_0^{(2)}$\\
 \midrule
-\texttt{operators.pml} & Stretch~\eqref{eq:stretch}, not yet\\
 \texttt{materials.sheets} & Impedance~\eqref{eq:sigma-sheet} and the symmetric cell, not yet\\
 \texttt{analytics.sheets} & $R,T$ from~\eqref{eq:R}, \eqref{eq:T}, not yet\\
 \texttt{grid.yee3d} & The same curls in three dimensions, not yet\\
@@ -917,7 +984,9 @@ temperature.
 The surface path stays off those arrays. A sheet object, when it exists, will
 receive the grid and replace the rows described in Sec.~\ref{sec:impedance}
 or Sec.~\ref{sec:symmetric-cell}. PEC is already a boundary kind rather than a
-material, because it removes unknowns instead of filling coefficients.
+material, because it removes unknowns instead of filling coefficients. An
+embedded PEC or PMC applies that removal to interior samples, through
+\texttt{materials.conductors}.
 
 \subsection{Relation to MaxwellMOM}
 \label{sec:mom}
@@ -949,9 +1018,10 @@ dispersion, invariant~\eqref{eq:invariant}.
 permittivity in FDFD, Debye or Lorentz auxiliaries in FDTD. Slab versus
 Fresnel, cylinder versus 2D Mie. External maps enter only as arrays the law
 samples.
-\item PML from Sec.~\ref{sec:pml}, embedded PEC and PMC objects, open-region
-Mie. Then the 3D cell: a rectangular cavity, then a sphere small enough to
-factor.
+\item PML from Sec.~\ref{sec:pml}, embedded PEC and PMC objects, and an open
+PEC cylinder against the Mie series. Still open on this step: a dielectric
+cylinder on the same PML, then the 3D cell, a rectangular cavity and a
+sphere small enough to factor.
 \item Resistive sheet, Sec.~\ref{sec:impedance}, against the analytic $R,T$
 and one MaxwellMOM run.
 \item Symmetric GSTC cell, Sec.~\ref{sec:symmetric-cell}, tangential $\chi$

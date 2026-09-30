@@ -6,7 +6,11 @@ then ``E`` at ``n`` with ``E`` at ``n+1``. The TMz update is
 An impressed current and a polarization current are subtracted inside the
 electric update, eq:jp. Both default to zero, which is the milestone-1 step.
 The electric update uses the lossy coefficients even when ``σ = 0``. PEC
-boundaries are written back to zero after the electric update.
+boundaries are written back to zero after the electric update. An optional
+convolutional PML replaces each derivative with the stretched derivative
+from eq:stretch-inv before that update. Embedded PEC samples are cleared
+with the wall. Embedded PMC samples are cleared after the magnetic update,
+before Ampere's law reads them.
 """
 
 from __future__ import annotations
@@ -18,8 +22,10 @@ import numpy as np
 from numpy.typing import NDArray
 
 from maxwell_fd.grid.yee2d import Boundary, Polarization, YeeGrid2D
+from maxwell_fd.materials.conductors import Conductors
 from maxwell_fd.materials.volume import TEComponents, TMComponents
 from maxwell_fd.operators.curl2d import array_curl_e, array_curl_h
+from maxwell_fd.operators.pml import ConvolutionalPML
 from maxwell_fd.utils.constants import C0
 
 FloatArray = NDArray[np.float64]
@@ -102,24 +108,41 @@ def step_tmz(
     dt: float,
     impressed_j: FloatArray | None = None,
     polarization_current: FloatArray | Callable[[FloatArray], FloatArray] | None = None,
+    *,
+    pml: ConvolutionalPML | None = None,
+    conductors: Conductors | None = None,
 ) -> None:
     """Advance a TMz state by one full time step, in place.
 
     ``polarization_current`` is either ``J_p`` at the new half-step or a
     callable of ``∇×H`` invoked after the magnetic update. A callable is how
-    the implicit Debye auxiliary sees the Ampere term.
+    the implicit Debye auxiliary sees the Ampere term. ``pml`` stretches the
+    derivatives and advances its own auxiliaries. ``conductors`` clears
+    embedded PEC and PMC samples.
     """
     _require(grid, Polarization.TMZ)
     _match_tm(grid, components, state)
-    curls = array_curl_e(grid, {"ez": state.ez})
+    masks = _masks(grid, conductors)
+    if pml is None:
+        curls = array_curl_e(grid, {"ez": state.ez})
+    else:
+        curls = pml.faraday(grid, {"ez": state.ez}, dt)
     state.hx -= (dt / components.mu_x) * curls["hx"]
     state.hy -= (dt / components.mu_y) * curls["hy"]
+    if masks is not None:
+        state.hx[masks.pmc["hx"]] = 0.0
+        state.hy[masks.pmc["hy"]] = 0.0
     c_a, c_b = electric_update_coefficients(components.eps_z, components.sigma_z, dt)
-    ampere = array_curl_h(grid, {"hx": state.hx, "hy": state.hy})["ez"]
+    if pml is None:
+        ampere = array_curl_h(grid, {"hx": state.hx, "hy": state.hy})["ez"]
+    else:
+        ampere = pml.ampere(grid, {"hx": state.hx, "hy": state.hy}, dt)["ez"]
     extra = _electric_current(ampere, impressed_j, polarization_current)
     state.ez *= c_a
     state.ez += c_b * (ampere - extra)
     _enforce_tm_pec(grid, state)
+    if masks is not None:
+        state.ez[masks.pec["ez"]] = 0.0
 
 
 def step_tez(
@@ -133,13 +156,25 @@ def step_tez(
         | Callable[[dict[str, FloatArray]], dict[str, FloatArray]]
         | None
     ) = None,
+    *,
+    pml: ConvolutionalPML | None = None,
+    conductors: Conductors | None = None,
 ) -> None:
     """Advance a TEz state by one full time step, in place."""
     _require(grid, Polarization.TEZ)
     _match_te(grid, components, state)
-    curl_z = array_curl_e(grid, {"ex": state.ex, "ey": state.ey})["hz"]
+    masks = _masks(grid, conductors)
+    if pml is None:
+        curl_z = array_curl_e(grid, {"ex": state.ex, "ey": state.ey})["hz"]
+    else:
+        curl_z = pml.faraday(grid, {"ex": state.ex, "ey": state.ey}, dt)["hz"]
     state.hz -= (dt / components.mu_z) * curl_z
-    curls = array_curl_h(grid, {"hz": state.hz})
+    if masks is not None:
+        state.hz[masks.pmc["hz"]] = 0.0
+    if pml is None:
+        curls = array_curl_h(grid, {"hz": state.hz})
+    else:
+        curls = pml.ampere(grid, {"hz": state.hz}, dt)
     currents = _te_currents(curls, impressed_j, polarization_current)
     for name, eps, sigma, field in (
         ("ex", components.eps_x, components.sigma_x, state.ex),
@@ -149,6 +184,9 @@ def step_tez(
         updated = c_a * field + c_b * (curls[name] - currents[name])
         field[...] = updated
     _enforce_te_pec(grid, state)
+    if masks is not None:
+        state.ex[masks.pec["ex"]] = 0.0
+        state.ey[masks.pec["ey"]] = 0.0
 
 
 def tmz_energy(
@@ -223,6 +261,12 @@ def _te_currents(
         )
         for name in ampere
     }
+
+
+def _masks(grid: YeeGrid2D, conductors: Conductors | None):
+    if conductors is None or not conductors.active:
+        return None
+    return conductors.masks(grid)
 
 
 def _enforce_tm_pec(grid: YeeGrid2D, state: TMzState) -> None:

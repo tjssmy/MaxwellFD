@@ -1,9 +1,10 @@
-"""2D Mie series for a non-magnetic dielectric cylinder, ``e^{jωt}``.
+"""2D Mie series for a cylinder, ``e^{jωt}``.
 
 Outgoing waves use ``H_n^{(2)}``. The incident expansion is eq:mie-inc, the
-TMz coefficient is eq:mie-tm, and the TEz coefficient is eq:mie-te in
-``FD_LaTeX_Reference.tex``. The PEC coefficient is a separate one-line
-reduction, not the large-index limit of the dielectric formula.
+dielectric TMz coefficient is eq:mie-tm, and the dielectric TEz coefficient
+is eq:mie-te in ``FD_LaTeX_Reference.tex``. The PEC coefficients are separate
+reductions, not the large-index limit of the dielectric formulas. Inside the
+cylinder, ρ < a, the PEC total field is zero.
 """
 
 from __future__ import annotations
@@ -30,10 +31,26 @@ def bessel_derivative(
     return 0.5 * (function(order - 1, argument) - function(order + 1, argument))
 
 
+def pec_coefficient(ka: float, orders: NDArray, *, te: bool) -> ComplexArray:
+    """PEC ``a_n`` for TEz when ``te`` is true, otherwise TMz.
+
+    TMz is ``-(-j)^n J_n(ka) / H_n^{(2)}(ka)``. TEz replaces each Bessel
+    function by its derivative, from ``E_φ = 0``.
+    """
+    n = np.asarray(orders, dtype=int)
+    phase = -((-1j) ** n)
+    if te:
+        numer = bessel_derivative(n, ka, hankel=False)
+        denom = bessel_derivative(n, ka, hankel=True)
+    else:
+        numer = jv(n, ka)
+        denom = hankel2(n, ka)
+    return np.asarray(phase * numer / denom, dtype=np.complex128)
+
+
 def pec_tmz_coefficient(ka: float, order: NDArray) -> ComplexArray:
     """``a_n = -(-j)^n J_n(ka) / H_n^{(2)}(ka)``."""
-    n = np.asarray(order, dtype=int)
-    return np.asarray(-((-1j) ** n) * jv(n, ka) / hankel2(n, ka), dtype=np.complex128)
+    return pec_coefficient(ka, order, te=False)
 
 
 def dielectric_coefficients(
@@ -116,6 +133,48 @@ def cylinder_te_electric(
     )
     permittivity = np.where(rho <= radius, eps_r * eps0, eps0)
     scale = 1.0 / (1j * float(omega) * permittivity)
+    return dy * scale, -dx * scale
+
+
+def pec_cylinder_ez(
+    x: NDArray,
+    y: NDArray,
+    *,
+    k: float,
+    radius: float,
+    center: tuple[float, float] = (0.0, 0.0),
+) -> ComplexArray:
+    """Total TMz ``Ez`` of a unit wave ``e^{-jk(x-x_c)}`` on a PEC cylinder."""
+    return _pec_scalar(x, y, k=k, radius=radius, center=center, te=False)
+
+
+def pec_cylinder_hz(
+    x: NDArray,
+    y: NDArray,
+    *,
+    k: float,
+    radius: float,
+    center: tuple[float, float] = (0.0, 0.0),
+) -> ComplexArray:
+    """Total TEz ``Hz`` of a unit wave ``e^{-jk(x-x_c)}`` on a PEC cylinder."""
+    return _pec_scalar(x, y, k=k, radius=radius, center=center, te=True)
+
+
+def pec_cylinder_te_electric(
+    x: NDArray,
+    y: NDArray,
+    *,
+    k: float,
+    radius: float,
+    omega: float,
+    eps0: float,
+    center: tuple[float, float] = (0.0, 0.0),
+) -> tuple[ComplexArray, ComplexArray]:
+    """``(Ex, Ey)`` outside a PEC cylinder. The interior, ρ < a, is zero."""
+    if omega == 0.0:
+        raise ValueError("omega must be nonzero")
+    dx, dy = _pec_derivatives(x, y, k=k, radius=radius, center=center, te=True)
+    scale = 1.0 / (1j * float(omega) * float(eps0))
     return dy * scale, -dx * scale
 
 
@@ -234,6 +293,81 @@ def _cartesian_derivatives(
         dx += chain_x * angular
         dy += chain_y * angular
     return dx.reshape(rho.shape), dy.reshape(rho.shape)
+
+
+def _pec_scalar(
+    x: NDArray,
+    y: NDArray,
+    *,
+    k: float,
+    radius: float,
+    center: tuple[float, float],
+    te: bool,
+) -> ComplexArray:
+    _check_pec_wave(k, radius)
+    abscissa = np.asarray(x, dtype=np.float64)
+    ordinate = np.asarray(y, dtype=np.float64)
+    rho, phi = _polar(abscissa, ordinate, center)
+    flat_rho = rho.ravel()
+    flat_phi = phi.ravel()
+    orders = azimuthal_orders(k * radius)
+    scattered = pec_coefficient(k * radius, orders, te=te)
+    acc = np.zeros(flat_rho.shape, dtype=np.complex128)
+    outside = flat_rho >= radius
+    if np.any(outside):
+        rho_out = flat_rho[outside]
+        phi_out = flat_phi[outside]
+        for n, a_n, phase0 in zip(orders, scattered, (-1j) ** orders, strict=True):
+            radial = phase0 * jv(n, k * rho_out) + a_n * hankel2(n, k * rho_out)
+            acc[outside] += radial * np.exp(1j * int(n) * phi_out)
+    return acc.reshape(rho.shape)
+
+
+def _pec_derivatives(
+    x: NDArray,
+    y: NDArray,
+    *,
+    k: float,
+    radius: float,
+    center: tuple[float, float],
+    te: bool,
+) -> tuple[ComplexArray, ComplexArray]:
+    _check_pec_wave(k, radius)
+    abscissa = np.asarray(x, dtype=np.float64)
+    ordinate = np.asarray(y, dtype=np.float64)
+    rho, phi = _polar(abscissa, ordinate, center)
+    flat_rho = rho.ravel()
+    flat_phi = phi.ravel()
+    dx = np.zeros(flat_rho.shape, dtype=np.complex128)
+    dy = np.zeros(flat_rho.shape, dtype=np.complex128)
+    outside = flat_rho >= radius
+    if np.any(outside):
+        rho_out = flat_rho[outside]
+        phi_out = flat_phi[outside]
+        cos_phi = np.cos(phi_out)
+        sin_phi = np.sin(phi_out)
+        orders = azimuthal_orders(k * radius)
+        scattered = pec_coefficient(k * radius, orders, te=te)
+        for n, a_n, phase0 in zip(orders, scattered, (-1j) ** orders, strict=True):
+            angular = np.exp(1j * int(n) * phi_out)
+            argument = k * rho_out
+            radial = phase0 * jv(n, argument) + a_n * hankel2(n, argument)
+            slope = k * (
+                phase0 * bessel_derivative(n, argument, hankel=False)
+                + a_n * bessel_derivative(n, argument, hankel=True)
+            )
+            chain_x = slope * cos_phi + radial * (1j * int(n)) * (-sin_phi) / rho_out
+            chain_y = slope * sin_phi + radial * (1j * int(n)) * cos_phi / rho_out
+            dx[outside] += chain_x * angular
+            dy[outside] += chain_y * angular
+    return dx.reshape(rho.shape), dy.reshape(rho.shape)
+
+
+def _check_pec_wave(k: float, radius: float) -> None:
+    if radius <= 0.0:
+        raise ValueError(f"radius must be positive, got {radius}")
+    if k <= 0.0:
+        raise ValueError(f"k must be positive, got {k}")
 
 
 def _polar(
