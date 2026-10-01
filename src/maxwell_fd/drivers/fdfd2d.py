@@ -26,6 +26,10 @@ accepts the conductors. It still refuses a PML.
 A non-magnetic open dielectric keeps every sample. The caller passes the
 contrast current ``J = j ω (ε − ε0) E_inc`` and the unknown is the
 scattered field. The diagonal still holds the full staircase permittivity.
+
+A resistive sheet is the same diagonal. The caller adds ``1/(Z_s Δy)`` to
+``σ`` on the tangential electric samples of the Ampere cell that contains
+the sheet, and the matrix uses ``ε + σ/(jω)`` with that conductivity.
 """
 
 from __future__ import annotations

@@ -31,9 +31,10 @@ sparse scheme (FDFD). Phasors use $e^{j\omega t}$, the same convention as the
 sibling surface code MaxwellMOM. The derivation below is two-dimensional, for
 TMz and TEz, in free space and in a uniform isotropic medium. PEC and periodic
 walls, the CFL limit, numerical dispersion, a stretched-coordinate PML, and a
-resistive sheet are written out so later slices can code them against equation
-numbers. The non-dispersive GSTC subcell is the symmetric Yee cell: the face
-unknowns and the local system are derived here. Spatially varying $\chi$,
+resistive sheet are written out against equation numbers. The resistive
+conductance is in the code. The non-dispersive GSTC subcell is the symmetric
+Yee cell: the face unknowns and the local system are derived here. Spatially
+varying $\chi$,
 Bloch cells, and dispersive $\chi$ are specified as checks, not as this
 slice's code.
 \end{abstract}
@@ -109,9 +110,10 @@ $\varepsilon(\omega)$ for FDFD. The time stepper requires real $\varepsilon$
 and $\sigma$; a dispersive time-domain medium will add auxiliary variables
 rather than a complex coefficient inside the leapfrog.
 
-Surface models are not constitutive samples. PEC, a resistive sheet, and a
-GSTC sheet modify curls or replace rows. They are not encoded by setting
-$\varepsilon$ to zero or to infinity.
+Surface models are not constitutive samples. PEC removes unknowns. A
+resistive sheet adds the conductance of Sec.~\ref{sec:impedance} to one
+Ampere cell. A GSTC sheet replaces rows. None of these is encoded by
+setting $\varepsilon$ to zero or to infinity.
 
 \subsection{Boundaries in the continuous problem}
 \label{sec:continuous-bc}
@@ -669,9 +671,18 @@ Open PEC cylinder, TMz & $8\cdot 10^{-2}$ relative & $E_z$, $\rho\ge a+2\Delta$\
 Open PEC cylinder, TEz & $10^{-1}$ relative & $E_x$ and $E_y$, same window\\
 Open dielectric cylinder, TMz & $8\cdot 10^{-3}$ relative & $E_z$, $|\rho-a|\ge 2\Delta$\\
 Open dielectric cylinder, TEz & $1.3\cdot 10^{-2}$ relative & $E_x$ and $E_y$, same window\\
+Resistive sheet, TMz & $6\cdot 10^{-4}$ relative & $E_z$, $8\times 80$, $\Delta=1$, $Z_s=\eta_0$, $\lambda=46$\\
+Resistive sheet, TEz & $1.2\cdot 10^{-2}$ relative & $E_x$ and $E_y$, same grid\\
 \bottomrule
 \end{tabular}
 \end{center}
+
+The resistive-sheet rows are a closed PEC box with zero impressed current
+and the analytic trace on the wall. The sheet is the
+conductance~\eqref{eq:sigma-sheet} on one Ampere cell, at $y=40$. The
+comparison is the packed free electric vector. The analytic coefficients
+at $Z_s=100\,\Omega$ and $k=2\pi/0.3$ match one stored MaxwellMOM value of
+that sheet.
 
 The 3D curls use the partial derivatives of Sec.~\ref{sec:curls} on every
 axis. The cavity row compares the Rayleigh quotient of a known mode with
@@ -800,12 +811,11 @@ $a_n=-(-j)^n J_n'(\alpha)/H_n^{(2)\prime}(\alpha)$.
 The open PEC cylinder is the scattered-field pair in the conductor table
 above. The open dielectric cylinder is the contrast-current pair in that
 same table. The open dielectric sphere is the contrast-current row in the
-3D table. Later slices add comparisons that this note already fixes the
+3D table. The resistive sheet is the last pair in the table above the 3D
+curls. Later slices add comparisons that this note already fixes the
 formulas for, and that the code does not yet run:
 
 \begin{itemize}
-\item a resistive sheet against~\eqref{eq:zs} and against one MaxwellMOM
-impedance run of the same case;
 \item a uniform GSTC sheet against the $R,T$ formulas of
 Sec.~\ref{sec:rt};
 \item a dipole, a Gaussian beam, a near-to-far integral, and a Bloch cell.
@@ -1007,9 +1017,8 @@ Sec.~\ref{sec:rt}.
 \subsection{Modules}
 \label{sec:modules}
 
-The milestone-1 tree is the part of the layout that those tests exercise.
-Later boxes are named now so the drivers do not have to be renamed when the
-sheets arrive.
+The modules above the rule are the layout the tests exercise. The row below
+names the symmetric cell, which is not coded.
 
 \begin{center}
 \begin{tabular}{@{}ll@{}}
@@ -1035,9 +1044,10 @@ Module & Responsibility\\
 \texttt{drivers.fdfd3d} & System~\eqref{eq:fdfd}, optional PML\\
 \texttt{analytics.cavity3d} & Frequency~\eqref{eq:semi} plus the $z$ term\\
 \texttt{analytics.mie3d} & Sphere series with $h_n^{(2)}$\\
+\texttt{materials.sheets} & Resistive $\sigma_{\mathrm{eff}}$ of~\eqref{eq:sigma-sheet}\\
+\texttt{analytics.sheets} & $R,T$ from~\eqref{eq:R}, \eqref{eq:T}\\
 \midrule
-\texttt{materials.sheets} & Impedance~\eqref{eq:sigma-sheet} and the symmetric cell, not yet\\
-\texttt{analytics.sheets} & $R,T$ from~\eqref{eq:R}, \eqref{eq:T}, not yet\\
+symmetric GSTC cell & Sec.~\ref{sec:symmetric-cell}, not yet\\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -1058,12 +1068,14 @@ neither. A dispersive or externally modulated law implements the same methods
 and returns arrays of the same shapes. The stepper does not learn about
 temperature.
 
-The surface path stays off those arrays. A sheet object, when it exists, will
-receive the grid and replace the rows described in Sec.~\ref{sec:impedance}
-or Sec.~\ref{sec:symmetric-cell}. PEC is already a boundary kind rather than a
-material, because it removes unknowns instead of filling coefficients. An
-embedded PEC or PMC applies that removal to interior samples, through
-\texttt{materials.conductors}.
+A resistive sheet is not a new unknown. \texttt{ResistiveSheet} adds
+$1/(Z_s\Delta y)$ to $\sigma$ on the tangential electric samples of the
+Ampere cell in Sec.~\ref{sec:impedance}. Both drivers then use that
+$\sigma$ unchanged. The symmetric cell of Sec.~\ref{sec:symmetric-cell}
+will replace rows when it is coded. PEC remains a boundary kind rather
+than a material, because it removes unknowns instead of filling
+coefficients. An embedded PEC or PMC applies that removal to interior
+samples, through \texttt{materials.conductors}.
 
 \subsection{Relation to MaxwellMOM}
 \label{sec:mom}
@@ -1099,8 +1111,9 @@ samples.
 PEC cylinder, and an open dielectric cylinder, both against the Mie
 series. The 3D cell, a rectangular PEC cavity, and an open dielectric
 sphere small enough to factor are in the code.
-\item Resistive sheet, Sec.~\ref{sec:impedance}, against the analytic $R,T$
-and one MaxwellMOM run.
+\item Resistive sheet, Sec.~\ref{sec:impedance}. The conductance
+\eqref{eq:sigma-sheet} is in the code. It is compared with~\eqref{eq:R},
+\eqref{eq:T}, and one stored MaxwellMOM value.
 \item Symmetric GSTC cell, Sec.~\ref{sec:symmetric-cell}, tangential $\chi$
 first, then $\chi_{mm}^{nn}$ and the bianisotropic terms in~\eqref{eq:bianiso}.
 \item Dipole, Gaussian beam, near-to-far, Bloch phase on the periodic wrap.

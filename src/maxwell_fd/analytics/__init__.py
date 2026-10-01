@@ -1,1 +1,1 @@
-"""Closed forms for the Yee scheme: cavities, dispersion, Fresnel, 2D and 3D Mie, and a line current."""
+"""Closed forms for the Yee scheme: cavities, dispersion, Fresnel, Mie, sheets, and a line current."""

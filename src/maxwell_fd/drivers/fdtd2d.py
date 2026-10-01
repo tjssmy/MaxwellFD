@@ -5,7 +5,9 @@ then ``E`` at ``n`` with ``E`` at ``n+1``. The TMz update is
 ``FD_LaTeX_Reference.tex`` (2.4)--(2.7) and the TEz magnetic update is (2.8).
 An impressed current and a polarization current are subtracted inside the
 electric update, eq:jp. Both default to zero, which is the milestone-1 step.
-The electric update uses the lossy coefficients even when ``σ = 0``. PEC
+The electric update uses the lossy coefficients even when ``σ = 0``. A
+resistive sheet adds ``1/(Z_s Δy)`` to that ``σ`` before ``C_a`` and ``C_b``
+are formed. PEC
 boundaries are written back to zero after the electric update. An optional
 convolutional PML replaces each derivative with the stretched derivative
 from eq:stretch-inv before that update. Embedded PEC samples are cleared
