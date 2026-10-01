@@ -54,7 +54,8 @@ $J=j\omega(\varepsilon-\varepsilon_0)E_{\mathrm{inc}}$. A 3D PEC cavity
 checks three pure modes of the Yee cell. An open dielectric sphere, on a
 PML small enough to factor, is compared with the Mie series. A resistive
 sheet adds its conductance to one Ampere cell and is compared with the
-analytic reflection. The GSTC cell remains specified in that note.
+analytic reflection. A symmetric GSTC sheet replaces the magnetic sample
+on one face and is compared the same way.
 \end{abstract}
 
 \tableofcontents
@@ -101,6 +102,10 @@ $1/(Z_s\Delta y)$ is added to $\sigma$ on the tangential electric samples
 of the one Ampere cell that contains the sheet. The closed-box check
 compares the packed electric field with the analytic reflection and
 transmission.
+\item A symmetric GSTC sheet of normal $\hat{\mathbf{y}}$. The magnetic
+sample on one face is replaced by the pair $H^-$ and $H^+$. Tangential
+$\chi_{ee}$ and $\chi_{mm}$ close the pair. The closed-box check compares
+the packed electric field with the analytic reflection and transmission.
 \end{enumerate}
 
 MaxwellFD does not import MaxwellMOM. The shared pieces are the time
@@ -156,8 +161,13 @@ Figure~\ref{fig:sheet-cell} draws that cell across the two primary cells
 that meet on the sheet. TMz loads $E_z$ and TEz loads $E_x$. The normal
 electric sample is left alone. The leapfrog absorbs the added conductivity in the
 coefficients~\eqref{eq:ca-cb}. FDFD absorbs it on the diagonal
-$\varepsilon+\sigma/(j\omega)$. The symmetric GSTC cell remains in the
-formulation note. An embedded PMC is a mask on magnetic samples inside
+$\varepsilon+\sigma/(j\omega)$. A symmetric GSTC sheet of the same normal
+sits on a magnetic face, halfway between electric rows.
+Figure~\ref{fig:gstc-cell} draws that face in the primary cell the sheet
+cuts. The magnetic sample on the face is replaced by the pair $H^-$ and
+$H^+$. Tangential $\chi_{ee}$ and $\chi_{mm}$ close the pair. FDFD appends
+the pair after the electric unknowns and returns the electric field. The
+resistive conductance is a separate update. An embedded PMC is a mask on magnetic samples inside
 the grid. The outer wall is still \texttt{Boundary.PEC} or
 \texttt{Boundary.PERIODIC}.
 
@@ -275,6 +285,120 @@ component $E_y$ are unchanged. The upper edge is open, so a sheet that
 lands on it is added to the cell above. The lower edge belongs to the
 shaded cell.}
 \label{fig:sheet-cell}
+\end{figure}
+
+\begin{figure}[ht]
+\centering
+\definecolor{sheetblue}{HTML}{08519C}
+\definecolor{cellfill}{HTML}{D6E6F5}
+\begin{tikzpicture}[
+  font=\small,
+  e/.style={circle, draw=black, fill=white, inner sep=0pt, minimum size=5.6pt},
+  eavg/.style={circle, draw=sheetblue, line width=0.9pt, fill=white,
+               inner sep=0pt, minimum size=6.4pt},
+  h/.style={rectangle, draw=black!60, fill=black!6, inner sep=0pt,
+            minimum size=4.4pt},
+  hpair/.style={rectangle, draw=white, line width=0.65pt, fill=sheetblue,
+                inner sep=0pt, minimum size=5.2pt},
+  ey/.style={rectangle, rotate=45, draw=black!70, fill=white, inner sep=0pt,
+             minimum size=4.6pt},
+  sheet/.style={sheetblue, line width=1.15pt},
+  dim/.style={black!75, line width=0.4pt}
+]
+
+\begin{scope}[xshift=1.15cm]
+  \fill[cellfill] (-0.22,0.8) rectangle (3.42,2.4);
+  \draw[black!45] (0,0) rectangle (3.2,0.8);
+  \draw[black!45] (0,0.8) rectangle (3.2,2.4);
+  \draw[black!45] (0,2.4) rectangle (3.2,3.2);
+  \draw[black!45] (1.6,0) -- (1.6,3.2);
+  \draw[sheet] (-0.38,1.6) -- (3.42,1.6);
+  \foreach \x in {0,1.6,3.2} {
+    \node[h] at (\x,0) {};
+    \node[h] at (\x,3.2) {};
+    \node[hpair] at (\x,1.34) {};
+    \node[hpair] at (\x,1.86) {};
+  }
+  \foreach \x in {0.8,2.4} {
+    \foreach \y in {0.8,2.4} \node[h] at (\x,\y) {};
+  }
+  \foreach \x in {0,1.6,3.2} {
+    \node[eavg] at (\x,0.8) {};
+    \node[eavg] at (\x,2.4) {};
+  }
+  \node[anchor=west, font=\scriptsize, text=sheetblue] at (0.28,1.86) {$H^+$};
+  \node[anchor=west, font=\scriptsize, text=sheetblue] at (0.28,1.34) {$H^-$};
+  \draw[dim] (3.58,0.8) -- (3.58,2.4);
+  \draw[dim] (3.50,0.8) -- (3.66,0.8);
+  \draw[dim] (3.50,2.4) -- (3.66,2.4);
+  \node[anchor=west, font=\scriptsize] at (3.76,1.6) {$\Delta y$};
+  \node[anchor=west, font=\scriptsize, text=black!65] at (3.76,0.4) {below};
+  \node[anchor=west, font=\scriptsize, text=black!65] at (3.76,2.8) {above};
+  \node[font=\scriptsize, anchor=east] at (-0.95,0.8) {$j$};
+  \node[font=\scriptsize, anchor=east] at (-0.95,2.4) {$j+1$};
+  \node at (1.6,3.68) {TMz};
+  \node[font=\scriptsize, text=sheetblue, align=center] at (1.6,-0.62)
+    {$H_x$ on the face becomes $H_x^-$, $H_x^+$};
+\end{scope}
+
+\begin{scope}[xshift=8.85cm]
+  \fill[cellfill] (-0.22,0.8) rectangle (3.42,2.4);
+  \draw[black!45] (0,0) rectangle (3.2,0.8);
+  \draw[black!45] (0,0.8) rectangle (3.2,2.4);
+  \draw[black!45] (0,2.4) rectangle (3.2,3.2);
+  \draw[black!45] (1.6,0) -- (1.6,3.2);
+  \draw[sheet] (-0.38,1.6) -- (3.42,1.6);
+  \foreach \x in {0,1.6,3.2} {
+    \foreach \y in {0,1.6,3.2} \node[ey] at (\x,\y) {};
+  }
+  \foreach \x in {0.8,2.4} {
+    \node[h] at (\x,0) {};
+    \node[h] at (\x,3.2) {};
+    \node[hpair] at (\x,1.34) {};
+    \node[hpair] at (\x,1.86) {};
+  }
+  \foreach \x in {0.8,2.4} {
+    \node[eavg] at (\x,0.8) {};
+    \node[eavg] at (\x,2.4) {};
+  }
+  \node[anchor=west, font=\scriptsize, text=sheetblue] at (1.02,1.86) {$H^+$};
+  \node[anchor=west, font=\scriptsize, text=sheetblue] at (1.02,1.34) {$H^-$};
+  \draw[dim] (3.58,0.8) -- (3.58,2.4);
+  \draw[dim] (3.50,0.8) -- (3.66,0.8);
+  \draw[dim] (3.50,2.4) -- (3.66,2.4);
+  \node[anchor=west, font=\scriptsize] at (3.76,1.6) {$\Delta y$};
+  \node[anchor=west, font=\scriptsize, text=black!65] at (3.76,0.4) {below};
+  \node[anchor=west, font=\scriptsize, text=black!65] at (3.76,2.8) {above};
+  \node at (1.6,3.68) {TEz};
+  \node[font=\scriptsize, text=sheetblue, align=center] at (1.6,-0.62)
+    {$H_z$ on the face becomes $H_z^-$, $H_z^+$};
+\end{scope}
+
+\node[eavg] at (0.15,-1.42) {};
+\node[anchor=west, font=\scriptsize] at (0.48,-1.42) {$E^-$, $E^+$};
+\node[e] at (2.35,-1.42) {};
+\node[anchor=west, font=\scriptsize] at (2.66,-1.42) {other $E$};
+\node[hpair] at (4.55,-1.42) {};
+\node[anchor=west, font=\scriptsize] at (4.88,-1.42) {$H^-$, $H^+$};
+\node[h] at (6.95,-1.42) {};
+\node[anchor=west, font=\scriptsize] at (7.26,-1.42) {$H$ off the cut};
+\node[ey] at (9.85,-1.42) {};
+\node[anchor=west, font=\scriptsize] at (10.16,-1.42) {$E_y$ on the face};
+\draw[sheet] (0.02,-1.98) -- (0.62,-1.98);
+\node[anchor=west, font=\scriptsize] at (0.74,-1.98) {sheet};
+\fill[cellfill] (2.15,-2.14) rectangle (2.78,-1.82);
+\node[anchor=west, font=\scriptsize] at (2.92,-1.98) {split primary cell};
+\end{tikzpicture}
+\caption{Where the symmetric sheet enters the Yee cell. The blue line is
+the sheet, on the magnetic face halfway between tangential electric rows
+$j$ and $j+1$. The shaded band is that primary cell, of height $\Delta y$.
+The Yee sample that sat on the face is removed. TMz puts the pair
+$H_x^-$, $H_x^+$ in its place, and TEz puts $H_z^-$, $H_z^+$ there. The
+pair and the two electric rows close the jumps. Magnetic samples one cell
+off the cut, marked below and above, stay single Yee values. $H_y$ stays
+on the electric rows. $E_y$ stays on the face and receives the average of
+the pair. Rows $j$ and $j+1$ keep the volumetric conductivity.}
+\label{fig:gstc-cell}
 \end{figure}
 
 \subsection{Staircase media}
@@ -614,12 +738,14 @@ Module & Role\\
 & Staircase PEC and PMC masks, \texttt{YBand} and \texttt{Circle}\\
 \texttt{operators.curl2d}
 & Sparse \texttt{curl\_e}, \texttt{curl\_h}, array curls, DOF layout, optional stretch\\
+\texttt{operators.gstc}
+& Symmetric cell: remove the cut sample and append $H^-$, $H^+$\\
 \texttt{operators.pml}
 & CFS profile, $1/s_w(\omega)$, the 2D leapfrog auxiliaries, and the 3D FDFD stretch\\
 \texttt{drivers.fdtd2d}
 & \texttt{step\_tmz}, \texttt{step\_tez}, CFL step, leapfrog invariant\\
 \texttt{drivers.fdfd2d}
-& \texttt{FDFDOperator}: system, eigenproblem, Dirichlet solve\\
+& \texttt{FDFDOperator}: system, eigenproblem, Dirichlet solve, optional sheet\\
 \texttt{analytics.cavity2d}
 & Semi-discrete cavity frequencies and mode shapes\\
 \texttt{analytics.dispersion}
@@ -643,9 +769,9 @@ Module & Role\\
 \texttt{analytics.mie3d}
 & Sphere fields with the outgoing wave $h_n^{(2)}$\\
 \texttt{materials.sheets}
-& \texttt{ResistiveSheet}: $1/(Z_s\Delta y)$ on one tangential electric row\\
+& \texttt{ResistiveSheet} on one Ampere cell, and \texttt{SymmetricSheet}\\
 \texttt{analytics.sheets}
-& Sheet $R$, $T$, and the normal-incidence resistive field\\
+& Sheet $R$, $T$, and the normal-incidence field\\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -675,7 +801,9 @@ mask. \texttt{FDFDOperator} takes an optional \texttt{PMLSpec} and the same
 mask. Passing neither a PML nor a conductor leaves both drivers on the full
 unstretched curls. A resistive sheet is applied to the sampled component
 arrays before either driver is built. It adds $1/(Z_s\Delta y)$ to
-$\sigma$ and does not change the solve or the step.
+$\sigma$ and does not change the solve or the step. A symmetric sheet is a
+keyword of \texttt{FDFDOperator}. It appends $H^-$ and $H^+$ and returns
+the electric field. It does not paint $\sigma$.
 
 The real eigenproblem is \texttt{spatial\_operator}. It returns the pair
 $(K,M)$ of the unstretched curl and refuses an active PML. TEz results
@@ -697,6 +825,7 @@ python examples/fdfd/2d/pml_line.py
 python examples/fdfd/2d/pec_cylinder.py
 python examples/fdfd/2d/dielectric_cylinder_open.py
 python examples/fdfd/2d/resistive_sheet.py
+python examples/fdfd/2d/symmetric_sheet.py
 python examples/fdfd/3d/cavity.py
 python examples/fdfd/3d/dielectric_sphere.py
 \end{verbatim}
@@ -718,9 +847,8 @@ slab faces, or the inner edge of the PML, is drawn on every panel. The open
 PEC cylinder and the open dielectric cylinder draw the outline and that
 inner edge together. The 3D cavity figure is one panel per pure mode.
 The open sphere is one row of $\mathrm{Re}\,E_x$ on the $xz$ plane
-through the center: FD, Mie, and FD$-$Mie. The resistive-sheet columns
-are FD, Sheet, and FD$-$Sheet, with $\mathrm{Re}\,E_z$ and
-$\mathrm{Re}\,E_x$.
+through the center: FD, Mie, and FD$-$Mie. The resistive sheet and the symmetric sheet use the columns FD, Sheet,
+and FD$-$Sheet, with $\mathrm{Re}\,E_z$ and $\mathrm{Re}\,E_x$.
 
 \subsection{Fresnel slab}
 \label{sec:ex-fresnel}
@@ -1084,10 +1212,57 @@ vector.}
 \label{fig:sheet-fields}
 \end{figure}
 
+\subsection{Symmetric sheet}
+\label{sec:ex-gstc}
+
+\begin{verbatim}
+python examples/fdfd/2d/symmetric_sheet.py
+\end{verbatim}
+
+\texttt{--chi-ee} and \texttt{--chi-mm} are the tangential susceptibilities.
+The defaults are $0.5$ and $0.25$. \texttt{--wavelength}, \texttt{--y},
+\texttt{--length}, \texttt{--height}, and \texttt{--dx} are the free-space
+wavelength, the magnetic-face coordinate, the two sides, and the cell size.
+Both sides must be a positive integer number of cells, and the sheet must
+lie on one magnetic face inside $(0,\texttt{height})$.
+
+The default run writes
+\begin{center}
+\path{symmetric_sheet_chiee0.5_chimm0.25_lam46_y40.5_length8_height80_dx1/}
+\end{center}
+with \texttt{domain.png} and \texttt{symmetric\_sheet.png}. The box is
+$8\times 80$ cells at $\Delta=1$. The sheet sits at $y=40.5$, halfway
+between electric rows, with $\chi_{ee}=0.5$, $\chi_{mm}=0.25$, and
+$\lambda=46$. Figure~\ref{fig:gstc-cell} is that face. The impressed current is zero. The wall carries the analytic
+trace. TMz prescribes $E_z(y)$ and TEz prescribes $E_x(y)$ with $E_y=0$.
+The field figure shows $\mathrm{Re}\,E_z$ and $\mathrm{Re}\,E_x$, with
+propagation along the horizontal axis. On this grid the annotated errors
+are $1.39\%$ (TMz) and $6.39\%$ (TEz). The regression uses the same grid
+and the bars $4.2\times 10^{-2}$ and $1.9\times 10^{-1}$. A cell of
+$\Delta=1/3$ on the same sheet drops both errors by more than half.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{../examples/fdfd/2d/symmetric_sheet_chiee0.5_chimm0.25_lam46_y40.5_length8_height80_dx1/domain.png}
+\caption{Default symmetric-sheet domain. The blue line is the sheet on a
+magnetic face. The green frame is the analytic trace on all four walls.}
+\label{fig:gstc-domain}
+\end{figure}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{../examples/fdfd/2d/symmetric_sheet_chiee0.5_chimm0.25_lam46_y40.5_length8_height80_dx1/symmetric_sheet.png}
+\caption{Symmetric sheet at $\chi_{ee}=0.5$, $\chi_{mm}=0.25$, $\lambda=46$,
+$y=40.5$, on an $8\times 80$ box at $\Delta=1$. The rows are
+$\mathrm{Re}\,E_z$ (TMz) and $\mathrm{Re}\,E_x$ (TEz). The annotated $L^2$
+is the packed free electric vector.}
+\label{fig:gstc-fields}
+\end{figure}
+
 \section{Tests and later slices}
 \label{sec:tests}
 
-The suite is \texttt{pytest} from the project root, sixty-six tests in
+The suite is \texttt{pytest} from the project root, seventy tests in
 \texttt{tests/}. Milestone~1 checks the curls, the adjoint, the cavity
 eigenvalues, the manufactured solve, the invariant and the CFL growth, and
 the fully discrete dispersion, with relative or absolute bars from
@@ -1120,11 +1295,14 @@ $n=1.5$ on an $18^3$ box with a PML of $3$ cells, stays under
 $1.8\times 10^{-2}$. The resistive sheet, at $Z_s=\eta_0$ on an
 $8\times 80$ box with $\Delta=1$, $\lambda=46$, and the sheet on the
 electric node $y=40$, stays under $6\times 10^{-4}$ (TMz, $E_z$) and
-$1.2\times 10^{-2}$ (TEz, $E_x$ and $E_y$). A failing
+$1.2\times 10^{-2}$ (TEz, $E_x$ and $E_y$). The symmetric sheet, on that
+box with the face $y=40.5$, $\chi_{ee}=0.5$, and $\chi_{mm}=0.25$, stays
+under $4.2\times 10^{-2}$ (TMz) and $1.9\times 10^{-1}$ (TEz). A cell of
+$\Delta=1/3$ on the same face drops both errors by more than half. A failing
 bar is a reason to refine the grid in that test, not to widen the bar.
 
 The formulation note already fixes the formulas for the slices that remain
-to be coded: the symmetric GSTC cell, impressed beams, a near-to-far
+to be coded: impressed beams, a near-to-far
 integral, and a Bloch phase. The Fresnel
 and dielectric-cylinder domain figures still draw an orange thickness as
 a layout. Those two solves use the Dirichlet trace. The open PEC cylinder

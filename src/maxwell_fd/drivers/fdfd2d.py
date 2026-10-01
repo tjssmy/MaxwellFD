@@ -30,6 +30,12 @@ scattered field. The diagonal still holds the full staircase permittivity.
 A resistive sheet is the same diagonal. The caller adds ``1/(Z_s Δy)`` to
 ``σ`` on the tangential electric samples of the Ampere cell that contains
 the sheet, and the matrix uses ``ε + σ/(jω)`` with that conductivity.
+
+A symmetric GSTC sheet is a different model. ``sheet`` splits the magnetic
+sample on one face into ``H^-`` and ``H^+`` and appends that pair after the
+electric unknowns. ``solve`` returns the electric prefix. The sheet keeps
+the unstretched curl, so it is not combined with a PML or an embedded
+conductor, and the spatial eigenproblem refuses it.
 """
 
 from __future__ import annotations
@@ -41,6 +47,7 @@ from scipy.sparse.linalg import spsolve
 
 from maxwell_fd.grid.yee2d import Polarization, YeeGrid2D
 from maxwell_fd.materials.conductors import Conductors
+from maxwell_fd.materials.sheets import SymmetricSheet
 from maxwell_fd.materials.volume import TEComponents, TMComponents
 from maxwell_fd.operators.curl2d import (
     CurlOperators,
@@ -50,6 +57,7 @@ from maxwell_fd.operators.curl2d import (
     array_curl_h,
     build_curls,
 )
+from maxwell_fd.operators.gstc import gstc_system, sheet_face
 from maxwell_fd.operators.pml import PMLProfile, PMLSpec
 
 ComplexArray = NDArray[np.complex128]
@@ -66,16 +74,24 @@ class FDFDOperator:
         pml: PMLSpec | None = None,
         *,
         conductors: Conductors | None = None,
+        sheet: SymmetricSheet | None = None,
     ) -> None:
         self.grid = grid
         self.components = components
         self.pml = pml
+        self.sheet = sheet
         self.conductors = (
             conductors if conductors is not None and conductors.active else None
         )
         self.profile: PMLProfile | None = None
         if pml is not None and pml.active:
             self.profile = PMLProfile(grid, pml)
+        if self.sheet is not None and self.profile is not None:
+            raise ValueError("symmetric sheet keeps the unstretched curl")
+        if self.sheet is not None and self.conductors is not None:
+            raise ValueError(
+                "symmetric sheet is not combined with an embedded conductor"
+            )
         self._fixed_e: dict[str, NDArray[np.bool_]] | None = None
         self._fixed_h: dict[str, NDArray[np.bool_]] | None = None
         if self.conductors is not None:
@@ -89,9 +105,13 @@ class FDFDOperator:
         self.eps_e, self.sigma_e, self.mu_h, self.eps_is_complex = _sample_diagonals(
             grid, components, self.layout
         )
+        if self.sheet is not None:
+            sheet_face(self.grid, self.layout, self.sheet)
 
     def spatial_operator(self) -> tuple[sparse.csr_matrix, sparse.csr_matrix]:
         """``K`` and ``M`` of eq. (4.2), with real positive ``ε`` and ``μ``."""
+        if self.sheet is not None:
+            raise ValueError("spatial eigenproblem has no GSTC sheet")
         if self.profile is not None:
             raise ValueError("spatial eigenproblem uses the unstretched real curl")
         if self.eps_is_complex or np.any(self.sigma_e != 0.0):
@@ -112,7 +132,19 @@ class FDFDOperator:
         inv_j_omega_mu = sparse.diags(1.0 / (j_omega * self.mu_h))
         operators = self._operators(omega)
         curl_curl = operators.curl_h @ inv_j_omega_mu @ operators.curl_e
-        return (curl_curl + sparse.diags(j_omega * permittivity)).tocsr()
+        base = (curl_curl + sparse.diags(j_omega * permittivity)).tocsr()
+        if self.sheet is None:
+            return base
+        return gstc_system(
+            self.grid,
+            self.layout,
+            operators.curl_e,
+            operators.curl_h,
+            self.mu_h,
+            self.sheet,
+            omega,
+            base,
+        )
 
     def solve(
         self,
@@ -129,7 +161,12 @@ class FDFDOperator:
         rhs = -current
         if dirichlet is not None:
             rhs = rhs - self._dirichlet_load(omega, dirichlet)
-        return np.asarray(spsolve(self.system_matrix(omega), rhs), dtype=np.complex128)
+        matrix = self.system_matrix(omega)
+        if matrix.shape[0] != rhs.size:
+            extra = matrix.shape[0] - rhs.size
+            rhs = np.concatenate([rhs, np.zeros(extra, dtype=np.complex128)])
+        solved = np.asarray(spsolve(matrix, rhs), dtype=np.complex128)
+        return solved[: self.layout.n_e]
 
     def _permittivity(self, omega: float) -> ComplexArray:
         if self.eps_is_complex:

@@ -1,8 +1,8 @@
-"""Volumetric constitutive laws, staircase conductors, and resistive sheets."""
+"""Volumetric constitutive laws, staircase conductors, and thin sheets."""
 
 from maxwell_fd.materials.conductors import Circle, Conductors, YBand
 from maxwell_fd.materials.dispersion import DebyeDielectric, LorentzDielectric
-from maxwell_fd.materials.sheets import ResistiveSheet
+from maxwell_fd.materials.sheets import ResistiveSheet, SymmetricSheet
 from maxwell_fd.materials.volume import (
     Disk,
     MappedPermittivity,
@@ -29,6 +29,7 @@ __all__ = [
     "YBand",
     "MappedPermittivity",
     "ResistiveSheet",
+    "SymmetricSheet",
     "SlabY",
     "StaircaseIsotropic",
     "StaircaseIsotropic3D",

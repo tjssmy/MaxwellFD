@@ -1,11 +1,15 @@
-"""Zero-thickness resistive sheets.
+"""Zero-thickness sheets.
 
-A sheet is not a volumetric sample. Its surface current is placed in the
-Ampere cell that contains it, by adding ``1/(Z_s Δy)`` to ``σ`` on the
+A resistive sheet is not a volumetric sample. Its surface current is placed
+in the Ampere cell that contains it, by adding ``1/(Z_s Δy)`` to ``σ`` on the
 tangential electric samples of that cell. That is eq:sigma-sheet. The cell
 is the half-open interval ``y - Δy/2 <= y_sheet < y + Δy/2`` around each
 tangential sample. ``E_z`` carries the TMz current and ``E_x`` carries the
 TEz current. The normal component is left alone.
+
+A symmetric GSTC sheet sits on a magnetic face, halfway between electric
+rows. ``SymmetricSheet`` holds the tangential susceptibilities. The FDFD
+driver replaces that face. This module does not paint ``σ`` for it.
 """
 
 from __future__ import annotations
@@ -16,6 +20,29 @@ import numpy as np
 
 from maxwell_fd.grid.yee2d import Boundary, Polarization, YeeGrid2D
 from maxwell_fd.materials.volume import TEComponents, TMComponents
+
+
+@dataclass(frozen=True)
+class SymmetricSheet:
+    """Tangential GSTC sheet on the magnetic face at ``y``.
+
+    ``chi_ee`` and ``chi_mm`` are the tangential susceptibilities in
+    eq:sc-h and eq:sc-e. The sheet sits halfway between electric rows.
+    """
+
+    y: float
+    chi_ee: complex
+    chi_mm: complex
+
+    def __post_init__(self) -> None:
+        if not np.isfinite(self.y):
+            raise ValueError(f"sheet coordinate must be finite, got {self.y}")
+        electric = complex(self.chi_ee)
+        magnetic = complex(self.chi_mm)
+        if not np.isfinite(electric) or not np.isfinite(magnetic):
+            raise ValueError(f"chi must be finite, got {self.chi_ee}, {self.chi_mm}")
+        object.__setattr__(self, "chi_ee", electric)
+        object.__setattr__(self, "chi_mm", magnetic)
 
 
 @dataclass(frozen=True)

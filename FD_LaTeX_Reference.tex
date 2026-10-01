@@ -33,10 +33,9 @@ TMz and TEz, in free space and in a uniform isotropic medium. PEC and periodic
 walls, the CFL limit, numerical dispersion, a stretched-coordinate PML, and a
 resistive sheet are written out against equation numbers. The resistive
 conductance is in the code. The non-dispersive GSTC subcell is the symmetric
-Yee cell: the face unknowns and the local system are derived here. Spatially
-varying $\chi$,
-Bloch cells, and dispersive $\chi$ are specified as checks, not as this
-slice's code.
+Yee cell: the face unknowns and the local system are derived here, and the
+tangential sheet is in the code. Spatially varying $\chi$, Bloch cells, and
+dispersive $\chi$ are specified as checks, not as this slice's code.
 \end{abstract}
 
 \tableofcontents
@@ -112,8 +111,8 @@ rather than a complex coefficient inside the leapfrog.
 
 Surface models are not constitutive samples. PEC removes unknowns. A
 resistive sheet adds the conductance of Sec.~\ref{sec:impedance} to one
-Ampere cell. A GSTC sheet replaces rows. None of these is encoded by
-setting $\varepsilon$ to zero or to infinity.
+Ampere cell. A GSTC sheet replaces the magnetic sample on the cut. None of
+these is encoded by setting $\varepsilon$ to zero or to infinity.
 
 \subsection{Boundaries in the continuous problem}
 \label{sec:continuous-bc}
@@ -673,6 +672,8 @@ Open dielectric cylinder, TMz & $8\cdot 10^{-3}$ relative & $E_z$, $|\rho-a|\ge 
 Open dielectric cylinder, TEz & $1.3\cdot 10^{-2}$ relative & $E_x$ and $E_y$, same window\\
 Resistive sheet, TMz & $6\cdot 10^{-4}$ relative & $E_z$, $8\times 80$, $\Delta=1$, $Z_s=\eta_0$, $\lambda=46$\\
 Resistive sheet, TEz & $1.2\cdot 10^{-2}$ relative & $E_x$ and $E_y$, same grid\\
+Symmetric sheet, TMz & $4.2\cdot 10^{-2}$ relative & $E_z$, same box, face $y=40.5$, $\chi_{ee}=0.5$, $\chi_{mm}=0.25$\\
+Symmetric sheet, TEz & $1.9\cdot 10^{-1}$ relative & $E_x$ and $E_y$, same grid\\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -682,7 +683,11 @@ and the analytic trace on the wall. The sheet is the
 conductance~\eqref{eq:sigma-sheet} on one Ampere cell, at $y=40$. The
 comparison is the packed free electric vector. The analytic coefficients
 at $Z_s=100\,\Omega$ and $k=2\pi/0.3$ match one stored MaxwellMOM value of
-that sheet.
+that sheet. The symmetric-sheet rows use the same box with the sheet on
+the magnetic face $y=40.5$, $\chi_{ee}=0.5$, and $\chi_{mm}=0.25$. The
+comparison is again the packed free electric vector. A cell of $\Delta=1/3$
+on that same sheet drops both errors by more than half. The coefficients
+at $k=2\pi/0.3$ for this $\chi$ match one stored MaxwellMOM value.
 
 The 3D curls use the partial derivatives of Sec.~\ref{sec:curls} on every
 axis. The cavity row compares the Rayleigh quotient of a known mode with
@@ -811,13 +816,11 @@ $a_n=-(-j)^n J_n'(\alpha)/H_n^{(2)\prime}(\alpha)$.
 The open PEC cylinder is the scattered-field pair in the conductor table
 above. The open dielectric cylinder is the contrast-current pair in that
 same table. The open dielectric sphere is the contrast-current row in the
-3D table. The resistive sheet is the last pair in the table above the 3D
-curls. Later slices add comparisons that this note already fixes the
-formulas for, and that the code does not yet run:
+3D table. The resistive sheet and the symmetric sheet are the last rows
+in the table above the 3D curls. Later slices add comparisons that this
+note already fixes the formulas for, and that the code does not yet run:
 
 \begin{itemize}
-\item a uniform GSTC sheet against the $R,T$ formulas of
-Sec.~\ref{sec:rt};
 \item a dipole, a Gaussian beam, a near-to-far integral, and a Bloch cell.
 \end{itemize}
 
@@ -977,9 +980,11 @@ sheet between an existing $H$ sample and an existing $E$ sample and adds no
 nodes. The tight asymmetric cell adds one electric node on one side of the
 cut and one magnetic node on the other, and it is the placement that paper
 found to converge fastest. Milestone~5 codes~\eqref{eq:sc-h}--\eqref{eq:sc-amp-p}
-and checks $R$ and $T$ against~\eqref{eq:R} and~\eqref{eq:T}. If the half-cell
-offset of the symmetric averages dominates the error, the tight asymmetric
-cell replaces it without a change to the jump conditions.
+and checks $R$ and $T$ against~\eqref{eq:R} and~\eqref{eq:T}. On the
+validation grid the half-cell offset is the leading error, and refining
+the cell drops it, so this placement stays. The tight asymmetric cell
+remains the recorded alternative. The coded cell appends $H^\pm$ after
+the electric unknowns. It does not paint the conductance~\eqref{eq:sigma-sheet}.
 
 A constant real $\chi$, independent of $\omega$, is a convenient FDFD value
 and a legal reduction of~\eqref{eq:sc-h}--\eqref{eq:sc-e}. It is not a causal
@@ -1008,8 +1013,7 @@ face, with the same jumps. A Bloch cell multiplies the periodic wrap by
 $e^{-j\mathbf{k}_B\cdot\mathbf{L}}$ and reports $R$ and $T$ in the Floquet
 orders. Spatially dispersive $\chi(k_t)$ is a separate operator, checked
 against MaxwellMOM's multi-$k_t$ reductions, and it is not a local $4\times 4$.
-None of these three is coded before the uniform tangential sheet agrees with
-Sec.~\ref{sec:rt}.
+None of these three is in this slice.
 
 \section{Software architecture}
 \label{sec:architecture}
@@ -1017,8 +1021,7 @@ Sec.~\ref{sec:rt}.
 \subsection{Modules}
 \label{sec:modules}
 
-The modules above the rule are the layout the tests exercise. The row below
-names the symmetric cell, which is not coded.
+The modules are the layout the tests exercise.
 
 \begin{center}
 \begin{tabular}{@{}ll@{}}
@@ -1032,7 +1035,7 @@ Module & Responsibility\\
 \texttt{operators.curl2d} & \texttt{curl\_e}, \texttt{curl\_h}, array curls, DOF order, optional $1/s_w$\\
 \texttt{operators.pml} & Stretch~\eqref{eq:stretch}--\eqref{eq:sigma-max}; 2D auxiliary and 3D FDFD\\
 \texttt{drivers.fdtd2d} & Leapfrog step, $J$ and $J_p$, invariant~\eqref{eq:invariant}\\
-\texttt{drivers.fdfd2d} & System~\eqref{eq:fdfd}, Dirichlet lift, sparse solve\\
+\texttt{drivers.fdfd2d} & System~\eqref{eq:fdfd}, Dirichlet lift, optional sheet\\
 \texttt{analytics.cavity2d} & Frequency~\eqref{eq:semi} and mode shapes~\eqref{eq:mode-tm}, \eqref{eq:mode-te}\\
 \texttt{analytics.dispersion} & Frequency~\eqref{eq:discrete} and the three-sample recurrence\\
 \texttt{analytics.fresnel} & Slab fields~\eqref{eq:fresnel-field}, \eqref{eq:fresnel-te}\\
@@ -1044,10 +1047,9 @@ Module & Responsibility\\
 \texttt{drivers.fdfd3d} & System~\eqref{eq:fdfd}, optional PML\\
 \texttt{analytics.cavity3d} & Frequency~\eqref{eq:semi} plus the $z$ term\\
 \texttt{analytics.mie3d} & Sphere series with $h_n^{(2)}$\\
-\texttt{materials.sheets} & Resistive $\sigma_{\mathrm{eff}}$ of~\eqref{eq:sigma-sheet}\\
+\texttt{materials.sheets} & Resistive $\sigma_{\mathrm{eff}}$ and tangential $\chi$\\
+\texttt{operators.gstc} & Symmetric cell, append $H^\pm$\\
 \texttt{analytics.sheets} & $R,T$ from~\eqref{eq:R}, \eqref{eq:T}\\
-\midrule
-symmetric GSTC cell & Sec.~\ref{sec:symmetric-cell}, not yet\\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -1072,7 +1074,9 @@ A resistive sheet is not a new unknown. \texttt{ResistiveSheet} adds
 $1/(Z_s\Delta y)$ to $\sigma$ on the tangential electric samples of the
 Ampere cell in Sec.~\ref{sec:impedance}. Both drivers then use that
 $\sigma$ unchanged. The symmetric cell of Sec.~\ref{sec:symmetric-cell}
-will replace rows when it is coded. PEC remains a boundary kind rather
+replaces the magnetic sample on the cut with the pair $H^-$, $H^+$.
+\texttt{operators.gstc} appends that pair, and the solve returns the
+electric prefix. PEC remains a boundary kind rather
 than a material, because it removes unknowns instead of filling
 coefficients. An embedded PEC or PMC applies that removal to interior
 samples, through \texttt{materials.conductors}.
@@ -1114,11 +1118,13 @@ sphere small enough to factor are in the code.
 \item Resistive sheet, Sec.~\ref{sec:impedance}. The conductance
 \eqref{eq:sigma-sheet} is in the code. It is compared with~\eqref{eq:R},
 \eqref{eq:T}, and one stored MaxwellMOM value.
-\item Symmetric GSTC cell, Sec.~\ref{sec:symmetric-cell}, tangential $\chi$
-first, then $\chi_{mm}^{nn}$ and the bianisotropic terms in~\eqref{eq:bianiso}.
+\item Symmetric GSTC cell, Sec.~\ref{sec:symmetric-cell}. Tangential
+$\chi_{ee}$ and $\chi_{mm}$ are in the code and are compared
+with~\eqref{eq:R} and~\eqref{eq:T}. The normal susceptibility and the
+bianisotropic terms in~\eqref{eq:bianiso} remain later.
 \item Dipole, Gaussian beam, near-to-far, Bloch phase on the periodic wrap.
 \item Profiling, Numba, iterative FDFD, GPU. Spatially varying and spatially
-dispersive $\chi$ after the uniform sheet matches Sec.~\ref{sec:rt}.
+dispersive $\chi$ remain later.
 \end{enumerate}
 
 Acceleration does not change the curls. Numba and CuPy, when they arrive,

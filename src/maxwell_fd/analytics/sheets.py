@@ -74,6 +74,50 @@ def resistive_coefficients(
     return sheet_coefficients(chi_ee_from_zs(zs, k), 0.0, k, theta=theta, te=te)
 
 
+def uniform_sheet_fields(
+    y: NDArray,
+    *,
+    y_sheet: float,
+    omega: float,
+    reflected: complex,
+    transmitted: complex,
+    branch: str = "auto",
+) -> tuple[ComplexArray, ComplexArray, ComplexArray, ComplexArray]:
+    """Return ``(ez, hx, hz, ex)`` for a normal-incidence uniform sheet.
+
+    The incident electric amplitude is 1 and its phase is zero on the sheet.
+    The wave arrives from ``y < y_sheet``. ``branch`` is ``"auto"``,
+    ``"below"``, or ``"above"``. The automatic split uses the transmitted
+    side for ``y >= y_sheet``. ``hx = (forward - backward)/η0`` and
+    ``hz = -hx``, the electric-amplitude convention shared by both
+    polarizations.
+    """
+    if omega == 0.0:
+        raise ValueError("omega must be nonzero")
+    if branch not in {"auto", "below", "above"}:
+        raise ValueError(f"branch must be auto, below, or above, got {branch}")
+    ordinate = np.asarray(y, dtype=np.float64)
+    k = float(omega) / C0
+    delta = ordinate - float(y_sheet)
+    incident = np.exp(-1j * k * delta)
+    mirror = np.exp(1j * k * delta)
+    if branch == "below":
+        illuminated = np.ones(ordinate.shape, dtype=bool)
+    elif branch == "above":
+        illuminated = np.zeros(ordinate.shape, dtype=bool)
+    else:
+        illuminated = ordinate < float(y_sheet)
+    coefficient_r = complex(reflected)
+    coefficient_t = complex(transmitted)
+    electric = np.where(
+        illuminated, incident + coefficient_r * mirror, coefficient_t * incident
+    )
+    forward = np.where(illuminated, incident, coefficient_t * incident)
+    backward = np.where(illuminated, coefficient_r * mirror, 0.0)
+    magnetic = (forward - backward) / ETA0
+    return electric, magnetic, -magnetic, electric
+
+
 def resistive_sheet_fields(
     y: NDArray,
     *,
@@ -91,24 +135,12 @@ def resistive_sheet_fields(
     """
     if omega == 0.0:
         raise ValueError("omega must be nonzero")
-    if branch not in {"auto", "below", "above"}:
-        raise ValueError(f"branch must be auto, below, or above, got {branch}")
-    ordinate = np.asarray(y, dtype=np.float64)
-    k = float(omega) / C0
-    reflected, transmitted = resistive_coefficients(zs, k)
-    delta = ordinate - float(y_sheet)
-    incident = np.exp(-1j * k * delta)
-    mirror = np.exp(1j * k * delta)
-    if branch == "below":
-        illuminated = np.ones(ordinate.shape, dtype=bool)
-    elif branch == "above":
-        illuminated = np.zeros(ordinate.shape, dtype=bool)
-    else:
-        illuminated = ordinate < float(y_sheet)
-    electric = np.where(
-        illuminated, incident + reflected * mirror, transmitted * incident
+    reflected, transmitted = resistive_coefficients(zs, float(omega) / C0)
+    return uniform_sheet_fields(
+        y,
+        y_sheet=y_sheet,
+        omega=omega,
+        reflected=reflected,
+        transmitted=transmitted,
+        branch=branch,
     )
-    forward = np.where(illuminated, incident, transmitted * incident)
-    backward = np.where(illuminated, reflected * mirror, 0.0)
-    magnetic = (forward - backward) / ETA0
-    return electric, magnetic, -magnetic, electric
