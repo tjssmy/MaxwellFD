@@ -1,10 +1,13 @@
-"""Uniform ε, μ, and σ on the six 3D Yee locations.
+"""Uniform and staircase ε, μ, and σ on the six 3D Yee locations.
 
-A staircase ball is not in this module. The 2D staircase stays in
-``materials.volume``.
+``Ball`` is closed: a sample is inside when its own coordinate is inside.
+A later region overwrites an earlier one. There is no volume fraction.
+The 2D staircase stays in ``materials.volume``.
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import NDArray
@@ -66,6 +69,84 @@ class UniformIsotropic3D:
             sigma_y=np.full(shape["ey"], self.sigma),
             sigma_z=np.full(shape["ez"], self.sigma),
         )
+
+
+@dataclass(frozen=True)
+class Ball:
+    """Closed ball. A sample is inside when its own coordinate is inside."""
+
+    x: float
+    y: float
+    z: float
+    radius: float
+    eps: float
+    mu: float = MU0
+    sigma: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.radius <= 0.0:
+            raise ValueError(f"radius must be positive, got {self.radius}")
+        _positive(self.eps, self.mu, self.sigma)
+
+    def contains(self, x: NDArray, y: NDArray, z: NDArray) -> NDArray:
+        return (x - self.x) ** 2 + (y - self.y) ** 2 + (
+            z - self.z
+        ) ** 2 <= self.radius**2
+
+
+class StaircaseIsotropic3D:
+    """Piecewise-constant ε, μ, and σ on the sample coordinates."""
+
+    def __init__(
+        self, background: UniformIsotropic3D, regions: tuple[Ball, ...] = ()
+    ) -> None:
+        self.background = background
+        self.regions = tuple(regions)
+
+    def sample(self, grid: YeeGrid3D) -> FieldComponents3D:
+        eps_x, sigma_x = _paint(grid, "ex", self, electric=True)
+        eps_y, sigma_y = _paint(grid, "ey", self, electric=True)
+        eps_z, sigma_z = _paint(grid, "ez", self, electric=True)
+        mu_x = _paint(grid, "hx", self, electric=False)
+        mu_y = _paint(grid, "hy", self, electric=False)
+        mu_z = _paint(grid, "hz", self, electric=False)
+        return FieldComponents3D(
+            eps_x=eps_x,
+            eps_y=eps_y,
+            eps_z=eps_z,
+            mu_x=mu_x,
+            mu_y=mu_y,
+            mu_z=mu_z,
+            sigma_x=sigma_x,
+            sigma_y=sigma_y,
+            sigma_z=sigma_z,
+        )
+
+
+def _paint(
+    grid: YeeGrid3D, component: str, law: StaircaseIsotropic3D, *, electric: bool
+) -> FloatArray | tuple[FloatArray, FloatArray]:
+    x, y, z = grid.coordinates(component)
+    xx, yy, zz = np.meshgrid(x, y, z, indexing="ij")
+    if electric:
+        eps = np.full(xx.shape, law.background.eps)
+        sigma = np.full(xx.shape, law.background.sigma)
+        for region in law.regions:
+            mask = region.contains(xx, yy, zz)
+            eps[mask] = region.eps
+            sigma[mask] = region.sigma
+        return eps, sigma
+    mu = np.full(xx.shape, law.background.mu)
+    for region in law.regions:
+        mu[region.contains(xx, yy, zz)] = region.mu
+    return mu
+
+
+def _positive(eps: float, mu: float, sigma: float) -> None:
+    if eps <= 0.0 or mu <= 0.0:
+        raise ValueError(f"eps and mu must be positive, got eps={eps}, mu={mu}")
+    if sigma < 0.0:
+        raise ValueError(f"sigma must be non-negative, got {sigma}")
 
 
 def _real(values: NDArray, name: str) -> FloatArray:

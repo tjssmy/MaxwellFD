@@ -11,9 +11,15 @@ from maxwell_fd.materials.volume import (
     TMComponents,
     UniformIsotropic,
 )
-from maxwell_fd.materials.volume3d import FieldComponents3D, UniformIsotropic3D
+from maxwell_fd.materials.volume3d import (
+    Ball,
+    FieldComponents3D,
+    StaircaseIsotropic3D,
+    UniformIsotropic3D,
+)
 
 __all__ = [
+    "Ball",
     "Circle",
     "Conductors",
     "DebyeDielectric",
@@ -23,6 +29,7 @@ __all__ = [
     "MappedPermittivity",
     "SlabY",
     "StaircaseIsotropic",
+    "StaircaseIsotropic3D",
     "TEComponents",
     "TMComponents",
     "UniformIsotropic",

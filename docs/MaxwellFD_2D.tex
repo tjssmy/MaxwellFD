@@ -50,7 +50,8 @@ Embedded PEC and PMC objects remove Yee samples, and an open PEC cylinder
 is compared with the Mie series on that band. An open dielectric cylinder
 on the same band is driven by the contrast current
 $J=j\omega(\varepsilon-\varepsilon_0)E_{\mathrm{inc}}$. A 3D PEC cavity
-checks three pure modes of the Yee cell. The resistive
+checks three pure modes of the Yee cell. An open dielectric sphere, on a
+PML small enough to factor, is compared with the Mie series. The resistive
 sheet and the GSTC cell remain specified in that note.
 \end{abstract}
 
@@ -89,15 +90,19 @@ of the total field is $E_s+E_{\mathrm{inc}}$.
 Uniform isotropic media, with PEC and periodic walls. Three pure cavity
 modes are checked by a Rayleigh quotient against the semi-discrete
 frequency with the third centered difference.
+\item An open dielectric sphere. The 3D FDFD operator stretches a
+PEC-backed PML and keeps a staircase ball in the permittivity. The
+incident wave is the contrast current, the unknown is the scattered
+field, and the total electric field is compared with the Mie series.
 \end{enumerate}
 
 MaxwellFD does not import MaxwellMOM. The shared pieces are the time
 convention, the four SI constants, and the analytic targets used as
-external checks. The 3D grid is a rectangular box with a uniform
-isotropic medium. Sheets, a 3D PML, and a 3D leapfrog remain later
-slices. Embedded PEC and PMC objects remove Yee samples on the 2D grid.
-The open PEC cylinder and the open dielectric cylinder are
-scattered-field solves on the PML.
+external checks. The 3D FDFD operator stretches a PEC-backed PML and
+accepts a staircase ball. The open check is a dielectric sphere. A 3D
+leapfrog remains a later slice. Embedded PEC and PMC objects remove Yee
+samples on the 2D grid. The open PEC cylinder and the open dielectric
+cylinder are scattered-field solves on the PML.
 
 \section{Physics}
 \label{sec:physics}
@@ -442,6 +447,17 @@ added term $(2\sin(k_z\Delta z/2)/\Delta z)^2$ and $k_z=p\pi/c$. A mode
 with exactly one index equal to zero is one Cartesian component:
 $(m,n,0)$ is $E_z$, $(m,0,p)$ is $E_y$, and $(0,n,p)$ is $E_x$.
 
+A staircase ball is closed. A sample is inside when
+$(x-x_c)^2+(y-y_c)^2+(z-z_c)^2\le a^2$, and electric and magnetic samples
+are tested separately. The 3D FDFD operator can rebuild every partial
+derivative with the stretch $1/s_w(\omega)$ on a band inside the PEC wall.
+The real eigenproblem refuses that stretch. A 3D leapfrog is not in this
+slice. The open dielectric sphere uses the contrast current of the open
+cylinder: the ball stays in the diagonal, the unknown is the scattered
+field, and a free sample of the total field is $E_s+E_{\mathrm{inc}}$.
+The incident wave travels toward $+z$ and equals $\hat{\mathbf{x}}$ at the
+sphere center.
+
 \section{Code}
 \label{sec:code}
 
@@ -467,7 +483,7 @@ Module & Role\\
 \texttt{operators.curl2d}
 & Sparse \texttt{curl\_e}, \texttt{curl\_h}, array curls, DOF layout, optional stretch\\
 \texttt{operators.pml}
-& CFS profile, $1/s_w(\omega)$, and the leapfrog auxiliaries\\
+& CFS profile, $1/s_w(\omega)$, the 2D leapfrog auxiliaries, and the 3D FDFD stretch\\
 \texttt{drivers.fdtd2d}
 & \texttt{step\_tmz}, \texttt{step\_tez}, CFL step, leapfrog invariant\\
 \texttt{drivers.fdfd2d}
@@ -485,13 +501,15 @@ Module & Role\\
 \texttt{grid.yee3d}
 & \texttt{YeeGrid3D}: six components, PEC and periodic shapes\\
 \texttt{materials.volume3d}
-& Uniform isotropic $\varepsilon$, $\mu$, and $\sigma$\\
+& Uniform isotropic law and a staircase ball\\
 \texttt{operators.curl3d}
-& Sparse and array curls on the 3D cell\\
+& Sparse and array curls on the 3D cell, optional $1/s_w$\\
 \texttt{drivers.fdfd3d}
-& \texttt{FDFDOperator3D}: system and real eigenproblem\\
+& \texttt{FDFDOperator3D}: system, real eigenproblem, optional PML\\
 \texttt{analytics.cavity3d}
 & Semi-discrete frequency with the $z$ term, and the pure modes\\
+\texttt{analytics.mie3d}
+& Sphere fields with the outgoing wave $h_n^{(2)}$\\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -541,6 +559,7 @@ python examples/fdfd/2d/pml_line.py
 python examples/fdfd/2d/pec_cylinder.py
 python examples/fdfd/2d/dielectric_cylinder_open.py
 python examples/fdfd/3d/cavity.py
+python examples/fdfd/3d/dielectric_sphere.py
 \end{verbatim}
 
 Each script writes a sibling directory whose name is the script stem plus
@@ -559,6 +578,8 @@ columns match. The difference has its own scale. The cylinder outline, the
 slab faces, or the inner edge of the PML, is drawn on every panel. The open
 PEC cylinder and the open dielectric cylinder draw the outline and that
 inner edge together. The 3D cavity figure is one panel per pure mode.
+The open sphere is one row of $\mathrm{Re}\,E_x$ on the $xz$ plane
+through the center: FD, Mie, and FD$-$Mie.
 
 \subsection{Fresnel slab}
 \label{sec:ex-fresnel}
@@ -831,10 +852,53 @@ $E_x(y,z)$.}
 \label{fig:cavity3d}
 \end{figure}
 
+\subsection{Open dielectric sphere}
+\label{sec:ex-sphere}
+
+\begin{verbatim}
+python examples/fdfd/3d/dielectric_sphere.py \
+    --radius 4 --index 1.5 --size 18 --dx 1 --pml 3
+\end{verbatim}
+
+The default run writes
+\begin{center}
+\path{dielectric_sphere_index1.5_ka1_a4_size18_dx1_pml3/}
+\end{center}
+with \texttt{domain.png} and \texttt{dielectric\_sphere.png}. The cube is
+$18$ cells on a side at $\Delta=1$, the radius is $4$, the index is $1.5$,
+and $ka=1$. Three PML cells back every face. The unknown is the scattered
+field. The staircase ball stays in the operator, and the incident wave
+$\hat{\mathbf{x}}\,e^{-jk(z-z_c)}$ enters as the contrast current. The
+figure shows $\mathrm{Re}\,E_x$ on the $xz$ plane through the center. The
+annotated $L^2$ is the electric-sample error on all three components,
+outside the PML and at least $2\Delta$ off the surface. On this grid that
+error is $0.98\%$. The regression uses the same grid and the bar
+$1.8\times 10^{-2}$.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.72\textwidth]{../examples/fdfd/3d/dielectric_sphere_index1.5_ka1_a4_size18_dx1_pml3/domain.png}
+\caption{Default open-sphere domain. The orange frame is the PML band
+used by the solve. The disk is the cross-section of the staircase ball,
+$n=1.5$.}
+\label{fig:sphere-domain}
+\end{figure}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{../examples/fdfd/3d/dielectric_sphere_index1.5_ka1_a4_size18_dx1_pml3/dielectric_sphere.png}
+\caption{Open dielectric sphere at $n=1.5$, $ka=1$, $a=4$, on an $18^3$
+box at $\Delta=1$, with three PML cells on each face. The panels are
+$\mathrm{Re}\,E_x$ on the $xz$ plane through the center. The annotated
+$L^2$ is the electric-sample error outside the PML and at least $2\Delta$
+off the surface.}
+\label{fig:sphere-fields}
+\end{figure}
+
 \section{Tests and later slices}
 \label{sec:tests}
 
-The suite is \texttt{pytest} from the project root, fifty-three tests in
+The suite is \texttt{pytest} from the project root, sixty-one tests in
 \texttt{tests/}. Milestone~1 checks the curls, the adjoint, the cavity
 eigenvalues, the manufactured solve, the invariant and the CFL growth, and
 the fully discrete dispersion, with relative or absolute bars from
@@ -860,16 +924,21 @@ at least $2\Delta$ off the rim, inside and outside the disk. The 3D
 curl bars are $10^{-12}$. On an $8\times 6\times 5$ PEC box the three
 pure modes match the semi-discrete frequency, with the $z$ term included,
 to $10^{-10}$. A manufactured solve on a $6\times 5\times 4$ box recovers
-the electric vector to the same bar. A failing
+the electric vector to the same bar. The stretched 3D curls match the
+array form to $10^{-12}$ on that box. The 3D Mie series is continuous
+across the sphere surface to $10^{-8}$. The open dielectric sphere, at
+$n=1.5$ on an $18^3$ box with a PML of $3$ cells, stays under
+$1.8\times 10^{-2}$. A failing
 bar is a reason to refine the grid in that test, not to widen the bar.
 
 The formulation note already fixes the formulas for the slices that remain
-to be coded: a 3D sphere small enough to factor, a resistive sheet, the symmetric GSTC cell,
+to be coded: a resistive sheet, the symmetric GSTC cell,
 impressed beams, a near-to-far integral, and a Bloch phase. The Fresnel
 and dielectric-cylinder domain figures still draw an orange thickness as
 a layout. Those two solves use the Dirichlet trace. The open PEC cylinder
-of Sec.~\ref{sec:ex-pec} and the open dielectric cylinder of
-Sec.~\ref{sec:ex-diel} are the solves that stretch the derivatives.
+of Sec.~\ref{sec:ex-pec}, the open dielectric cylinder of
+Sec.~\ref{sec:ex-diel}, and the open dielectric sphere of
+Sec.~\ref{sec:ex-sphere} are the solves that stretch the derivatives.
 
 \clearpage
 \begin{thebibliography}{9}

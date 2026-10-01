@@ -27,6 +27,10 @@ over one step integrates that ODE by
 
 and the stretched derivative is ``κ^{-1} ∂_w u + ψ``. The update uses the
 auxiliary at the new time. ``Δt`` is the leapfrog step.
+
+``PMLSpec3`` and ``PMLProfile3`` put the same stretch on a 3D PEC box.
+That profile feeds the frequency-domain curls. A 3D leapfrog auxiliary
+is not built here.
 """
 
 from __future__ import annotations
@@ -37,7 +41,9 @@ import numpy as np
 from numpy.typing import NDArray
 
 from maxwell_fd.grid.yee2d import Boundary, Polarization, YeeGrid2D
+from maxwell_fd.grid.yee3d import YeeGrid3D
 from maxwell_fd.operators.curl2d import CurlScale, array_curl_e, array_curl_h
+from maxwell_fd.operators.curl3d import CurlScale3
 from maxwell_fd.utils.constants import EPS0, ETA0
 
 FloatArray = NDArray[np.float64]
@@ -93,6 +99,64 @@ class PMLSpec:
     def box(cls, cells: int, **kwargs: float | int) -> PMLSpec:
         """The same cell count on every side."""
         return cls(x_lo=cells, x_hi=cells, y_lo=cells, y_hi=cells, **kwargs)
+
+
+@dataclass(frozen=True)
+class PMLSpec3:
+    """Cell counts and CFS parameters for the six PEC-backed bands.
+
+    ``z_lo`` and ``z_hi`` are the thicknesses along z. The polynomial, the
+    target reflection, and the CFS grading match ``PMLSpec``.
+    """
+
+    x_lo: int = 0
+    x_hi: int = 0
+    y_lo: int = 0
+    y_hi: int = 0
+    z_lo: int = 0
+    z_hi: int = 0
+    m: int = 3
+    r0: float = 1e-6
+    kappa_max: float = 1.0
+    alpha_max: float = 0.0
+
+    def __post_init__(self) -> None:
+        for name in ("x_lo", "x_hi", "y_lo", "y_hi", "z_lo", "z_hi", "m"):
+            value = getattr(self, name)
+            if isinstance(value, (bool, float)) or int(value) != value:
+                raise ValueError(f"{name} must be an integer, got {value}")
+            object.__setattr__(self, name, int(value))
+        if self.m < 1:
+            raise ValueError(f"m must be >= 1, got {self.m}")
+        if min(self.x_lo, self.x_hi, self.y_lo, self.y_hi, self.z_lo, self.z_hi) < 0:
+            raise ValueError("PML thicknesses must be non-negative")
+        if not 0.0 < float(self.r0) < 1.0:
+            raise ValueError(f"r0 must lie in (0, 1), got {self.r0}")
+        if float(self.kappa_max) < 1.0:
+            raise ValueError(f"kappa_max must be >= 1, got {self.kappa_max}")
+        if float(self.alpha_max) < 0.0:
+            raise ValueError(f"alpha_max must be >= 0, got {self.alpha_max}")
+        object.__setattr__(self, "r0", float(self.r0))
+        object.__setattr__(self, "kappa_max", float(self.kappa_max))
+        object.__setattr__(self, "alpha_max", float(self.alpha_max))
+
+    @property
+    def active(self) -> bool:
+        """True when at least one side has a positive thickness."""
+        return self.x_lo + self.x_hi + self.y_lo + self.y_hi + self.z_lo + self.z_hi > 0
+
+    @classmethod
+    def box(cls, cells: int, **kwargs: float | int) -> PMLSpec3:
+        """The same cell count on every side."""
+        return cls(
+            x_lo=cells,
+            x_hi=cells,
+            y_lo=cells,
+            y_hi=cells,
+            z_lo=cells,
+            z_hi=cells,
+            **kwargs,
+        )
 
 
 @dataclass(frozen=True)
@@ -163,6 +227,93 @@ class PMLProfile:
             te_y_on_hz=_expand_y(_inv_s(self.y_mid, omega), self.grid.nx),
             te_y_on_ex=_expand_y(_inv_s(self.y_node, omega), self.grid.nx),
             te_x_on_ey=_expand_x(_inv_s(self.x_node, omega), self.grid.ny),
+        )
+
+
+class PMLProfile3:
+    """CFS coefficients on the node and midpoint lines of one 3D PEC grid."""
+
+    def __init__(self, grid: YeeGrid3D, spec: PMLSpec3) -> None:
+        if grid.boundary is not Boundary.PEC:
+            raise ValueError("PML is backed by the PEC wall")
+        _require_room(spec.x_lo, spec.x_hi, grid.nx, "x")
+        _require_room(spec.y_lo, spec.y_hi, grid.ny, "y")
+        _require_room(spec.z_lo, spec.z_hi, grid.nz, "z")
+        self.grid = grid
+        self.spec = spec
+        self.x_node = _grade(
+            _coords(grid.nx, grid.dx, mid=False),
+            grid.a,
+            grid.dx,
+            spec.x_lo,
+            spec.x_hi,
+            spec,
+        )
+        self.x_mid = _grade(
+            _coords(grid.nx, grid.dx, mid=True),
+            grid.a,
+            grid.dx,
+            spec.x_lo,
+            spec.x_hi,
+            spec,
+        )
+        self.y_node = _grade(
+            _coords(grid.ny, grid.dy, mid=False),
+            grid.b,
+            grid.dy,
+            spec.y_lo,
+            spec.y_hi,
+            spec,
+        )
+        self.y_mid = _grade(
+            _coords(grid.ny, grid.dy, mid=True),
+            grid.b,
+            grid.dy,
+            spec.y_lo,
+            spec.y_hi,
+            spec,
+        )
+        self.z_node = _grade(
+            _coords(grid.nz, grid.dz, mid=False),
+            grid.c,
+            grid.dz,
+            spec.z_lo,
+            spec.z_hi,
+            spec,
+        )
+        self.z_mid = _grade(
+            _coords(grid.nz, grid.dz, mid=True),
+            grid.c,
+            grid.dz,
+            spec.z_lo,
+            spec.z_hi,
+            spec,
+        )
+
+    def scale(self, omega: float) -> CurlScale3:
+        """``1/s_w(ω)`` on every 3D derivative."""
+        if omega == 0.0:
+            raise ValueError("omega must be nonzero")
+        shapes = self.grid.shapes()
+        x_node = _inv_s(self.x_node, omega)
+        x_mid = _inv_s(self.x_mid, omega)
+        y_node = _inv_s(self.y_node, omega)
+        y_mid = _inv_s(self.y_mid, omega)
+        z_node = _inv_s(self.z_node, omega)
+        z_mid = _inv_s(self.z_mid, omega)
+        return CurlScale3(
+            y_on_hx=_along(y_mid, shapes["hx"], 1),
+            z_on_hx=_along(z_mid, shapes["hx"], 2),
+            z_on_hy=_along(z_mid, shapes["hy"], 2),
+            x_on_hy=_along(x_mid, shapes["hy"], 0),
+            x_on_hz=_along(x_mid, shapes["hz"], 0),
+            y_on_hz=_along(y_mid, shapes["hz"], 1),
+            y_on_ex=_along(y_node, shapes["ex"], 1),
+            z_on_ex=_along(z_node, shapes["ex"], 2),
+            z_on_ey=_along(z_node, shapes["ey"], 2),
+            x_on_ey=_along(x_node, shapes["ey"], 0),
+            x_on_ez=_along(x_node, shapes["ez"], 0),
+            y_on_ez=_along(y_node, shapes["ez"], 1),
         )
 
 
@@ -310,7 +461,7 @@ def _grade(
     spacing: float,
     n_lo: int,
     n_hi: int,
-    spec: PMLSpec,
+    spec: PMLSpec | PMLSpec3,
 ) -> Grade:
     sigma = np.zeros(coords.shape, dtype=np.float64)
     kappa = np.ones(coords.shape, dtype=np.float64)
@@ -336,7 +487,7 @@ def _paint(
     coords: FloatArray,
     face: float,
     thickness: float,
-    spec: PMLSpec,
+    spec: PMLSpec | PMLSpec3,
     *,
     low: bool,
 ) -> None:
@@ -366,6 +517,16 @@ def _recurrence(grade: Grade, dt: float) -> tuple[FloatArray, FloatArray, FloatA
     large = np.abs(beta_dt) >= 1e-8
     np.divide(np.expm1(-beta_dt), -beta_dt, out=ratio, where=large)
     return np.exp(-beta_dt), -gamma * dt * ratio, 1.0 / grade.kappa
+
+
+def _along(line: NDArray, shape: tuple[int, int, int], axis: int) -> NDArray:
+    if line.shape != (shape[axis],):
+        raise ValueError(
+            f"PML line length {line.shape[0]} does not match axis {axis} of {shape}"
+        )
+    view = [1, 1, 1]
+    view[axis] = line.shape[0]
+    return np.broadcast_to(np.reshape(line, view), shape).copy()
 
 
 def _expand_x(values: NDArray, n_y: int) -> NDArray:

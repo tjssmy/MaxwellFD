@@ -9,7 +9,14 @@ applied to the free electric unknowns ``(Ex, Ey, Ez)``. It equals ``-J``.
 Real ``ε`` and ``σ`` enter the diagonal as ``ε + σ/(jω)``.
 
 ``spatial_operator`` returns the real pair ``(K, M)`` of eq. (4.2) for
-lossless media. A PML is not attached to this driver.
+lossless media. Conductivity and a PML stay in the driven system. A PML
+multiplies each derivative by ``1/s_w(ω)``. The curls are rebuilt at the
+solve frequency because that factor depends on ``ω``. The eigenproblem
+refuses an active PML.
+
+A non-magnetic open dielectric keeps every sample. The caller passes the
+contrast current ``J = j ω (ε − ε0) E_inc`` and the unknown is the
+scattered field. The diagonal still holds the full staircase permittivity.
 """
 
 from __future__ import annotations
@@ -22,6 +29,7 @@ from scipy.sparse.linalg import spsolve
 from maxwell_fd.grid.yee3d import YeeGrid3D
 from maxwell_fd.materials.volume3d import FieldComponents3D
 from maxwell_fd.operators.curl3d import CurlOperators3, Layout3, build_curls
+from maxwell_fd.operators.pml import PMLProfile3, PMLSpec3
 
 ComplexArray = NDArray[np.complex128]
 RealArray = NDArray[np.float64]
@@ -30,9 +38,18 @@ RealArray = NDArray[np.float64]
 class FDFDOperator3D:
     """Sparse 3D curls plus the constitutive samples on the free electric unknowns."""
 
-    def __init__(self, grid: YeeGrid3D, components: FieldComponents3D) -> None:
+    def __init__(
+        self,
+        grid: YeeGrid3D,
+        components: FieldComponents3D,
+        pml: PMLSpec3 | None = None,
+    ) -> None:
         self.grid = grid
         self.components = components
+        self.pml = pml
+        self.profile: PMLProfile3 | None = None
+        if pml is not None and pml.active:
+            self.profile = PMLProfile3(grid, pml)
         self.operators: CurlOperators3 = build_curls(grid)
         self.layout: Layout3 = self.operators.layout
         self.eps_e, self.sigma_e, self.mu_h = _sample_diagonals(
@@ -41,6 +58,8 @@ class FDFDOperator3D:
 
     def spatial_operator(self) -> tuple[sparse.csr_matrix, sparse.csr_matrix]:
         """``K`` and ``M`` of eq. (4.2), with real positive ``ε`` and ``μ``."""
+        if self.profile is not None:
+            raise ValueError("spatial eigenproblem uses the unstretched real curl")
         if np.any(self.sigma_e != 0.0):
             raise ValueError("spatial eigenproblem needs sigma = 0")
         if np.any(self.mu_h <= 0.0) or np.any(self.eps_e <= 0.0):
@@ -57,8 +76,14 @@ class FDFDOperator3D:
         j_omega = 1j * float(omega)
         permittivity = self.eps_e + self.sigma_e / j_omega
         inv_j_omega_mu = sparse.diags(1.0 / (j_omega * self.mu_h))
-        curl_curl = self.operators.curl_h @ inv_j_omega_mu @ self.operators.curl_e
+        operators = self._operators(omega)
+        curl_curl = operators.curl_h @ inv_j_omega_mu @ operators.curl_e
         return (curl_curl + sparse.diags(j_omega * permittivity)).tocsr()
+
+    def _operators(self, omega: float) -> CurlOperators3:
+        if self.profile is None:
+            return self.operators
+        return build_curls(self.grid, scale=self.profile.scale(omega))
 
     def solve(self, omega: float, impressed_j: NDArray) -> ComplexArray:
         """Electric unknowns for ``A e = -J``."""

@@ -693,9 +693,22 @@ Check & Bar & What is compared\\
 3D matrix versus array curl & $10^{-12}$ relative & Same boxes, PEC boundaries held at zero\\
 3D PEC cavity, three pure modes & $10^{-10}$ relative & $8\times 6\times 5$ box, versus~\eqref{eq:semi} plus $z$\\
 3D manufactured FDFD solve & $10^{-10}$ relative & Recovered $\mathrm{e}$ on a $6\times 5\times 4$ box\\
+3D stretched curls & $10^{-12}$ relative & Matrix versus array curl, $6\times 5\times 4$ box\\
+3D Mie surface & $10^{-8}$ absolute & Tangential $E,H$ and normal $D,B$ at $\rho=a$\\
+Open dielectric sphere & $1.8\cdot 10^{-2}$ relative & $E$, $|\rho-a|\ge 2\Delta$, $18^3$ box, PML of 3 cells\\
 \bottomrule
 \end{tabular}
 \end{center}
+
+The stretched-curl row multiplies each partial derivative by $1/s_w$ and
+compares the sparse matrix with the array curl. The surface row evaluates
+the sphere series from both sides of $\rho=a$. Tangential $E$ and $H$
+match, as do the normal components of $D$ and $B$. That series is the
+outgoing spherical wave $h_n^{(2)}$. Its coefficients are not written out
+in this note. The open sphere is a contrast-current solve: the staircase
+ball stays in the permittivity, the unknown is the scattered field, and
+the comparison keeps the electric samples outside the PML and at least
+$2\Delta$ off the surface.
 
 \subsection{Normal-incidence Fresnel slab}
 \label{sec:fresnel}
@@ -786,12 +799,11 @@ $a_n=-(-j)^n J_n'(\alpha)/H_n^{(2)\prime}(\alpha)$.
 
 The open PEC cylinder is the scattered-field pair in the conductor table
 above. The open dielectric cylinder is the contrast-current pair in that
-same table. Later slices add comparisons that this note already fixes the
+same table. The open dielectric sphere is the contrast-current row in the
+3D table. Later slices add comparisons that this note already fixes the
 formulas for, and that the code does not yet run:
 
 \begin{itemize}
-\item a sphere against the 3D Mie series, at a size~\eqref{eq:fdfd} can
-still factor;
 \item a resistive sheet against~\eqref{eq:zs} and against one MaxwellMOM
 impedance run of the same case;
 \item a uniform GSTC sheet against the $R,T$ formulas of
@@ -1009,7 +1021,7 @@ Module & Responsibility\\
 \texttt{materials.dispersion} & Debye and Lorentz laws, auxiliaries $J_p$\\
 \texttt{materials.conductors} & Staircase PEC and PMC masks\\
 \texttt{operators.curl2d} & \texttt{curl\_e}, \texttt{curl\_h}, array curls, DOF order, optional $1/s_w$\\
-\texttt{operators.pml} & Stretch~\eqref{eq:stretch}--\eqref{eq:sigma-max} and the leapfrog auxiliary\\
+\texttt{operators.pml} & Stretch~\eqref{eq:stretch}--\eqref{eq:sigma-max}; 2D auxiliary and 3D FDFD\\
 \texttt{drivers.fdtd2d} & Leapfrog step, $J$ and $J_p$, invariant~\eqref{eq:invariant}\\
 \texttt{drivers.fdfd2d} & System~\eqref{eq:fdfd}, Dirichlet lift, sparse solve\\
 \texttt{analytics.cavity2d} & Frequency~\eqref{eq:semi} and mode shapes~\eqref{eq:mode-tm}, \eqref{eq:mode-te}\\
@@ -1018,10 +1030,11 @@ Module & Responsibility\\
 \texttt{analytics.mie2d} & Cylinder series~\eqref{eq:mie-tm}, \eqref{eq:mie-te}\\
 \texttt{analytics.green2d} & Outgoing line current, $H_0^{(2)}$\\
 \texttt{grid.yee3d} & 3D counts, spacings, boundary, shapes, coordinates\\
-\texttt{materials.volume3d} & Uniform isotropic $\varepsilon,\mu,\sigma$\\
-\texttt{operators.curl3d} & 3D \texttt{curl\_e}, \texttt{curl\_h}, array curls\\
-\texttt{drivers.fdfd3d} & System~\eqref{eq:fdfd} on $(E_x,E_y,E_z)$\\
+\texttt{materials.volume3d} & Uniform law and a staircase ball\\
+\texttt{operators.curl3d} & 3D curls and array curls, optional $1/s_w$\\
+\texttt{drivers.fdfd3d} & System~\eqref{eq:fdfd}, optional PML\\
 \texttt{analytics.cavity3d} & Frequency~\eqref{eq:semi} plus the $z$ term\\
+\texttt{analytics.mie3d} & Sphere series with $h_n^{(2)}$\\
 \midrule
 \texttt{materials.sheets} & Impedance~\eqref{eq:sigma-sheet} and the symmetric cell, not yet\\
 \texttt{analytics.sheets} & $R,T$ from~\eqref{eq:R}, \eqref{eq:T}, not yet\\
@@ -1035,7 +1048,9 @@ run in time or in frequency by constructing the other driver on the same
 object. \texttt{YeeGrid3D} owns the three counts, the three spacings, and the
 same boundary kind. The 3D grid is its own object: every component that the
 stencil staggers in $z$ carries that stagger. Its FDFD driver reads the same
-elimination, \eqref{eq:fdfd}, on $(E_x,E_y,E_z)$.
+elimination, \eqref{eq:fdfd}, on $(E_x,E_y,E_z)$. An optional PML rebuilds
+those curls with the same $1/s_w$ as~\eqref{eq:stretch}. A staircase ball
+assigns one isotropic permittivity to every sample inside the closed sphere.
 
 \texttt{UniformIsotropic.sample\_tm} and \texttt{sample\_te} take the grid and
 optional \texttt{omega} and \texttt{state} arguments. Milestone~1 passes
@@ -1082,8 +1097,8 @@ Fresnel, cylinder versus 2D Mie. External maps enter only as arrays the law
 samples.
 \item PML from Sec.~\ref{sec:pml}, embedded PEC and PMC objects, an open
 PEC cylinder, and an open dielectric cylinder, both against the Mie
-series. The 3D cell and a rectangular PEC cavity are in the code. Still
-open on this step: a sphere small enough to factor.
+series. The 3D cell, a rectangular PEC cavity, and an open dielectric
+sphere small enough to factor are in the code.
 \item Resistive sheet, Sec.~\ref{sec:impedance}, against the analytic $R,T$
 and one MaxwellMOM run.
 \item Symmetric GSTC cell, Sec.~\ref{sec:symmetric-cell}, tangential $\chi$

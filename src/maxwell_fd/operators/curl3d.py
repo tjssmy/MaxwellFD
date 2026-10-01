@@ -8,11 +8,13 @@ as ``FD_LaTeX_Reference.tex`` (2.1)--(2.3), taken on every axis:
     (∇×E)_y = ∂Ex/∂z − ∂Ez/∂x,   (∇×H)_y = ∂Hx/∂z − ∂Hz/∂x,
     (∇×E)_z = ∂Ey/∂x − ∂Ex/∂y,   (∇×H)_z = ∂Hy/∂x − ∂Hx/∂y.
 
-With no stretch, ``curl_h`` is the transpose of ``curl_e``. PEC tangential
-electric samples are omitted. Magnetic samples that do not enter
-``curl_h`` at a free electric sample are omitted too. The array curls
-accept the full stored arrays and agree with the matrices when those
-omitted electric samples are zero.
+With no stretch, ``curl_h`` is the transpose of ``curl_e``. A scale
+multiplies each partial derivative by ``1/s_w`` at the sample where that
+derivative is centered. A varying scale is complex, and the two curls are
+then not transposes. PEC tangential electric samples are omitted.
+Magnetic samples that do not enter ``curl_h`` at a free electric sample
+are omitted too. The array curls accept the full stored arrays and agree
+with the matrices when those omitted electric samples are zero.
 """
 
 from __future__ import annotations
@@ -82,29 +84,72 @@ class CurlOperators3:
     curl_h: sparse.csr_matrix
 
 
-def build_curls(grid: YeeGrid3D) -> CurlOperators3:
+@dataclass(frozen=True)
+class CurlScale3:
+    """``1/s_w`` on ``∂/∂w``, shaped like the curl component that difference enters."""
+
+    y_on_hx: NDArray
+    z_on_hx: NDArray
+    z_on_hy: NDArray
+    x_on_hy: NDArray
+    x_on_hz: NDArray
+    y_on_hz: NDArray
+    y_on_ex: NDArray
+    z_on_ex: NDArray
+    z_on_ey: NDArray
+    x_on_ey: NDArray
+    x_on_ez: NDArray
+    y_on_ez: NDArray
+
+
+_SCALE_COMPONENT = {
+    "y_on_hx": "hx",
+    "z_on_hx": "hx",
+    "z_on_hy": "hy",
+    "x_on_hy": "hy",
+    "x_on_hz": "hz",
+    "y_on_hz": "hz",
+    "y_on_ex": "ex",
+    "z_on_ex": "ex",
+    "z_on_ey": "ey",
+    "x_on_ey": "ey",
+    "x_on_ez": "ez",
+    "y_on_ez": "ez",
+}
+
+
+def build_curls(grid: YeeGrid3D, *, scale: CurlScale3 | None = None) -> CurlOperators3:
     """Assemble ``curl_e`` (H rows, E columns) and ``curl_h`` (E rows, H columns)."""
     layout = _layout(grid)
     if layout.n_e == 0:
         raise ValueError("grid removes every electric unknown")
-    curl_e, curl_h = _curls(grid, layout)
+    factors = _factors(scale, grid)
+    curl_e, curl_h = _curls(grid, layout, factors)
     return CurlOperators3(layout=layout, curl_e=curl_e, curl_h=curl_h)
 
 
 def array_curl_e(
-    grid: YeeGrid3D, fields: dict[str, FieldArray]
+    grid: YeeGrid3D,
+    fields: dict[str, FieldArray],
+    scale: CurlScale3 | None = None,
 ) -> dict[str, FieldArray]:
     """∇×E on the full H arrays."""
     _check_fields(grid, fields, electric=True)
-    return _array_curl_e(grid, fields["ex"], fields["ey"], fields["ez"])
+    return _array_curl_e(
+        grid, fields["ex"], fields["ey"], fields["ez"], _factors(scale, grid)
+    )
 
 
 def array_curl_h(
-    grid: YeeGrid3D, fields: dict[str, FieldArray]
+    grid: YeeGrid3D,
+    fields: dict[str, FieldArray],
+    scale: CurlScale3 | None = None,
 ) -> dict[str, FieldArray]:
     """∇×H on the full E arrays. PEC tangential samples stay zero."""
     _check_fields(grid, fields, electric=False)
-    return _array_curl_h(grid, fields["hx"], fields["hy"], fields["hz"])
+    return _array_curl_h(
+        grid, fields["hx"], fields["hy"], fields["hz"], _factors(scale, grid)
+    )
 
 
 def _pack(sets: tuple[DofSet3, ...], fields: dict[str, NDArray]) -> NDArray:
@@ -153,7 +198,7 @@ def _id_map(dof: DofSet3) -> NDArray[np.int64]:
 
 
 def _curls(
-    grid: YeeGrid3D, layout: Layout3
+    grid: YeeGrid3D, layout: Layout3, factors: dict[str, NDArray] | None
 ) -> tuple[sparse.csr_matrix, sparse.csr_matrix]:
     ex, ey, ez = layout.e
     hx, hy, hz = layout.h
@@ -198,6 +243,7 @@ def _curls(
             offset=n_ex + n_ey,
             periodic=periodic,
             dims=dims,
+            factors=_row_scale(factors, "y_on_hx", hx),
         )
     )
     add_e(
@@ -211,6 +257,7 @@ def _curls(
             offset=n_ex,
             periodic=periodic,
             dims=dims,
+            factors=_row_scale(factors, "z_on_hx", hx),
         )
     )
 
@@ -226,6 +273,7 @@ def _curls(
             offset=0,
             periodic=periodic,
             dims=dims,
+            factors=_row_scale(factors, "z_on_hy", hy),
         )
     )
     add_e(
@@ -239,6 +287,7 @@ def _curls(
             offset=n_ex + n_ey,
             periodic=periodic,
             dims=dims,
+            factors=_row_scale(factors, "x_on_hy", hy),
         )
     )
 
@@ -254,6 +303,7 @@ def _curls(
             offset=n_ex,
             periodic=periodic,
             dims=dims,
+            factors=_row_scale(factors, "x_on_hz", hz),
         )
     )
     add_e(
@@ -267,6 +317,7 @@ def _curls(
             offset=0,
             periodic=periodic,
             dims=dims,
+            factors=_row_scale(factors, "y_on_hz", hz),
         )
     )
 
@@ -282,6 +333,7 @@ def _curls(
             offset=n_hx + n_hy,
             periodic=periodic,
             dims=dims,
+            factors=_row_scale(factors, "y_on_ex", ex),
         )
     )
     add_h(
@@ -295,6 +347,7 @@ def _curls(
             offset=n_hx,
             periodic=periodic,
             dims=dims,
+            factors=_row_scale(factors, "z_on_ex", ex),
         )
     )
 
@@ -310,6 +363,7 @@ def _curls(
             offset=0,
             periodic=periodic,
             dims=dims,
+            factors=_row_scale(factors, "z_on_ey", ey),
         )
     )
     add_h(
@@ -323,6 +377,7 @@ def _curls(
             offset=n_hx + n_hy,
             periodic=periodic,
             dims=dims,
+            factors=_row_scale(factors, "x_on_ey", ey),
         )
     )
 
@@ -338,6 +393,7 @@ def _curls(
             offset=n_hx,
             periodic=periodic,
             dims=dims,
+            factors=_row_scale(factors, "x_on_ez", ez),
         )
     )
     add_h(
@@ -351,6 +407,7 @@ def _curls(
             offset=0,
             periodic=periodic,
             dims=dims,
+            factors=_row_scale(factors, "y_on_ez", ez),
         )
     )
 
@@ -371,15 +428,21 @@ def _difference(
     offset: int,
     periodic: bool,
     dims: tuple[int, int, int],
+    factors: NDArray | None,
 ) -> list[tuple[NDArray, NDArray, NDArray] | None]:
     """Centered difference of the column field, sampled at ``dof``.
 
     ``high`` is ``(f[p+e] - f[p])``. The low form is ``(f[p] - f[p-e])``,
     which is the transpose stencil. ``offset`` is added after the mask so
-    a missing id of -1 is not shifted into a real column.
+    a missing id of -1 is not shifted into a real column. ``factors``
+    multiplies both stencil entries and is aligned with ``rows``.
     """
     here = _masked(
-        rows, col_ids[dof.i, dof.j, dof.k], -weight if high else weight, offset
+        rows,
+        col_ids[dof.i, dof.j, dof.k],
+        -weight if high else weight,
+        offset,
+        factors,
     )
     step = 1 if high else -1
     neighbor = _shift(dof.i, dof.j, dof.k, axis, step, periodic, dims)
@@ -388,6 +451,7 @@ def _difference(
         col_ids[neighbor[0], neighbor[1], neighbor[2]],
         weight if high else -weight,
         offset,
+        factors,
     )
     return [other, here]
 
@@ -414,11 +478,17 @@ def _masked(
     cols: NDArray[np.int64],
     value: float,
     offset: int,
+    factors: NDArray | None,
 ) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray] | None:
     keep = cols >= 0
     if not np.any(keep):
         return None
-    data = np.full(int(np.count_nonzero(keep)), value, dtype=np.float64)
+    if factors is None:
+        data: NDArray = np.full(int(np.count_nonzero(keep)), value, dtype=np.float64)
+    else:
+        data = np.asarray(factors[keep]) * value
+        dtype = np.complex128 if np.iscomplexobj(data) else np.float64
+        data = np.asarray(data, dtype=dtype)
     return rows[keep], cols[keep] + offset, data
 
 
@@ -430,18 +500,30 @@ def _coo(
 ) -> sparse.csr_matrix:
     if not rows:
         return sparse.csr_matrix(shape, dtype=np.float64)
+    values = np.concatenate(data)
+    dtype = np.complex128 if np.iscomplexobj(values) else np.float64
     return sparse.coo_matrix(
-        (np.concatenate(data), (np.concatenate(rows), np.concatenate(cols))),
+        (np.asarray(values, dtype=dtype), (np.concatenate(rows), np.concatenate(cols))),
         shape=shape,
-        dtype=np.float64,
+        dtype=dtype,
     ).tocsr()
 
 
 def _array_curl_e(
-    grid: YeeGrid3D, ex: FieldArray, ey: FieldArray, ez: FieldArray
+    grid: YeeGrid3D,
+    ex: FieldArray,
+    ey: FieldArray,
+    ez: FieldArray,
+    factors: dict[str, NDArray] | None,
 ) -> dict[str, FieldArray]:
     dx, dy, dz = grid.dx, grid.dy, grid.dz
-    dtype = np.result_type(ex, ey, ez, np.float64)
+    dtype = _dtype(
+        ex,
+        ey,
+        ez,
+        factors,
+        ("y_on_hx", "z_on_hx", "z_on_hy", "x_on_hy", "x_on_hz", "y_on_hz"),
+    )
     if grid.boundary is Boundary.PERIODIC:
         d_ez_dy = (np.roll(ez, -1, axis=1) - ez) / dy
         d_ey_dz = (np.roll(ey, -1, axis=2) - ey) / dz
@@ -449,26 +531,42 @@ def _array_curl_e(
         d_ez_dx = (np.roll(ez, -1, axis=0) - ez) / dx
         d_ey_dx = (np.roll(ey, -1, axis=0) - ey) / dx
         d_ex_dy = (np.roll(ex, -1, axis=1) - ex) / dy
-        return {
-            "hx": d_ez_dy - d_ey_dz,
-            "hy": d_ex_dz - d_ez_dx,
-            "hz": d_ey_dx - d_ex_dy,
-        }
-    hx = (ez[:, 1:, :] - ez[:, :-1, :]) / dy - (ey[:, :, 1:] - ey[:, :, :-1]) / dz
-    hy = (ex[:, :, 1:] - ex[:, :, :-1]) / dz - (ez[1:, :, :] - ez[:-1, :, :]) / dx
-    hz = (ey[1:, :, :] - ey[:-1, :, :]) / dx - (ex[:, 1:, :] - ex[:, :-1, :]) / dy
+    else:
+        d_ez_dy = (ez[:, 1:, :] - ez[:, :-1, :]) / dy
+        d_ey_dz = (ey[:, :, 1:] - ey[:, :, :-1]) / dz
+        d_ex_dz = (ex[:, :, 1:] - ex[:, :, :-1]) / dz
+        d_ez_dx = (ez[1:, :, :] - ez[:-1, :, :]) / dx
+        d_ey_dx = (ey[1:, :, :] - ey[:-1, :, :]) / dx
+        d_ex_dy = (ex[:, 1:, :] - ex[:, :-1, :]) / dy
+    if factors is not None:
+        d_ez_dy = d_ez_dy * factors["y_on_hx"]
+        d_ey_dz = d_ey_dz * factors["z_on_hx"]
+        d_ex_dz = d_ex_dz * factors["z_on_hy"]
+        d_ez_dx = d_ez_dx * factors["x_on_hy"]
+        d_ey_dx = d_ey_dx * factors["x_on_hz"]
+        d_ex_dy = d_ex_dy * factors["y_on_hz"]
     return {
-        "hx": np.asarray(hx, dtype=dtype),
-        "hy": np.asarray(hy, dtype=dtype),
-        "hz": np.asarray(hz, dtype=dtype),
+        "hx": np.asarray(d_ez_dy - d_ey_dz, dtype=dtype),
+        "hy": np.asarray(d_ex_dz - d_ez_dx, dtype=dtype),
+        "hz": np.asarray(d_ey_dx - d_ex_dy, dtype=dtype),
     }
 
 
 def _array_curl_h(
-    grid: YeeGrid3D, hx: FieldArray, hy: FieldArray, hz: FieldArray
+    grid: YeeGrid3D,
+    hx: FieldArray,
+    hy: FieldArray,
+    hz: FieldArray,
+    factors: dict[str, NDArray] | None,
 ) -> dict[str, FieldArray]:
     dx, dy, dz = grid.dx, grid.dy, grid.dz
-    dtype = np.result_type(hx, hy, hz, np.float64)
+    dtype = _dtype(
+        hx,
+        hy,
+        hz,
+        factors,
+        ("y_on_ex", "z_on_ex", "z_on_ey", "x_on_ey", "x_on_ez", "y_on_ez"),
+    )
     if grid.boundary is Boundary.PERIODIC:
         d_hz_dy = (hz - np.roll(hz, 1, axis=1)) / dy
         d_hy_dz = (hy - np.roll(hy, 1, axis=2)) / dz
@@ -476,25 +574,73 @@ def _array_curl_h(
         d_hz_dx = (hz - np.roll(hz, 1, axis=0)) / dx
         d_hy_dx = (hy - np.roll(hy, 1, axis=0)) / dx
         d_hx_dy = (hx - np.roll(hx, 1, axis=1)) / dy
+        if factors is not None:
+            d_hz_dy = d_hz_dy * factors["y_on_ex"]
+            d_hy_dz = d_hy_dz * factors["z_on_ex"]
+            d_hx_dz = d_hx_dz * factors["z_on_ey"]
+            d_hz_dx = d_hz_dx * factors["x_on_ey"]
+            d_hy_dx = d_hy_dx * factors["x_on_ez"]
+            d_hx_dy = d_hx_dy * factors["y_on_ez"]
         return {
-            "ex": d_hz_dy - d_hy_dz,
-            "ey": d_hx_dz - d_hz_dx,
-            "ez": d_hy_dx - d_hx_dy,
+            "ex": np.asarray(d_hz_dy - d_hy_dz, dtype=dtype),
+            "ey": np.asarray(d_hx_dz - d_hz_dx, dtype=dtype),
+            "ez": np.asarray(d_hy_dx - d_hx_dy, dtype=dtype),
         }
     shapes = grid.shapes()
     ex = np.zeros(shapes["ex"], dtype=dtype)
     ey = np.zeros(shapes["ey"], dtype=dtype)
     ez = np.zeros(shapes["ez"], dtype=dtype)
-    ex[:, 1:-1, 1:-1] = (hz[:, 1:, 1:-1] - hz[:, :-1, 1:-1]) / dy - (
-        hy[:, 1:-1, 1:] - hy[:, 1:-1, :-1]
-    ) / dz
-    ey[1:-1, :, 1:-1] = (hx[1:-1, :, 1:] - hx[1:-1, :, :-1]) / dz - (
-        hz[1:, :, 1:-1] - hz[:-1, :, 1:-1]
-    ) / dx
-    ez[1:-1, 1:-1, :] = (hy[1:, 1:-1, :] - hy[:-1, 1:-1, :]) / dx - (
-        hx[1:-1, 1:, :] - hx[1:-1, :-1, :]
-    ) / dy
+    d_hz_dy = (hz[:, 1:, 1:-1] - hz[:, :-1, 1:-1]) / dy
+    d_hy_dz = (hy[:, 1:-1, 1:] - hy[:, 1:-1, :-1]) / dz
+    d_hx_dz = (hx[1:-1, :, 1:] - hx[1:-1, :, :-1]) / dz
+    d_hz_dx = (hz[1:, :, 1:-1] - hz[:-1, :, 1:-1]) / dx
+    d_hy_dx = (hy[1:, 1:-1, :] - hy[:-1, 1:-1, :]) / dx
+    d_hx_dy = (hx[1:-1, 1:, :] - hx[1:-1, :-1, :]) / dy
+    if factors is not None:
+        d_hz_dy = factors["y_on_ex"][:, 1:-1, 1:-1] * d_hz_dy
+        d_hy_dz = factors["z_on_ex"][:, 1:-1, 1:-1] * d_hy_dz
+        d_hx_dz = factors["z_on_ey"][1:-1, :, 1:-1] * d_hx_dz
+        d_hz_dx = factors["x_on_ey"][1:-1, :, 1:-1] * d_hz_dx
+        d_hy_dx = factors["x_on_ez"][1:-1, 1:-1, :] * d_hy_dx
+        d_hx_dy = factors["y_on_ez"][1:-1, 1:-1, :] * d_hx_dy
+    ex[:, 1:-1, 1:-1] = d_hz_dy - d_hy_dz
+    ey[1:-1, :, 1:-1] = d_hx_dz - d_hz_dx
+    ez[1:-1, 1:-1, :] = d_hy_dx - d_hx_dy
     return {"ex": ex, "ey": ey, "ez": ez}
+
+
+def _factors(scale: CurlScale3 | None, grid: YeeGrid3D) -> dict[str, NDArray] | None:
+    if scale is None:
+        return None
+    shapes = grid.shapes()
+    out: dict[str, NDArray] = {}
+    for name, component in _SCALE_COMPONENT.items():
+        array = np.asarray(getattr(scale, name))
+        if array.shape != shapes[component]:
+            raise ValueError(f"{name} shape {array.shape} != {shapes[component]}")
+        out[name] = array
+    return out
+
+
+def _row_scale(
+    factors: dict[str, NDArray] | None, name: str, dof: DofSet3
+) -> NDArray | None:
+    if factors is None:
+        return None
+    return factors[name][dof.i, dof.j, dof.k]
+
+
+def _dtype(
+    first: NDArray,
+    second: NDArray,
+    third: NDArray,
+    factors: dict[str, NDArray] | None,
+    names: tuple[str, ...],
+) -> np.dtype:
+    pieces: list[NDArray] = [first, second, third]
+    if factors is not None:
+        pieces.extend(factors[name] for name in names)
+    return np.result_type(*pieces, np.float64)
 
 
 def _check_fields(
