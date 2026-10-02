@@ -118,6 +118,59 @@ def uniform_sheet_fields(
     return electric, magnetic, -magnetic, electric
 
 
+def oblique_sheet_fields(
+    x: NDArray,
+    y: NDArray,
+    *,
+    y_sheet: float,
+    omega: float,
+    reflected: complex,
+    transmitted: complex,
+    theta: float = 0.0,
+    x_ref: float = 0.0,
+) -> dict[str, ComplexArray]:
+    """Uniform-sheet fields at an angle ``theta`` from the normal.
+
+    ``x`` and ``y`` are one component's sample coordinates. The returned
+    arrays are that mesh, so a staggered component is evaluated with its own
+    coordinates. The incident electric amplitude is 1 and its phase is zero
+    at ``(x_ref, y_sheet)``. The wave arrives from ``y < y_sheet``. ``R`` and
+    ``T`` multiply that amplitude. Below the sheet the field is the incident
+    wave plus the reflected wave; on and above the sheet it is the
+    transmitted wave. At ``theta = 0`` the tangential fields match
+    ``uniform_sheet_fields``.
+    """
+    if omega == 0.0:
+        raise ValueError("omega must be nonzero")
+    if not np.isfinite(theta) or abs(theta) >= 0.5 * np.pi:
+        raise ValueError(f"|theta| must be below π/2, got {theta}")
+    abscissa = np.asarray(x, dtype=np.float64)
+    ordinate = np.asarray(y, dtype=np.float64)
+    xx, yy = np.meshgrid(abscissa, ordinate, indexing="ij")
+    k = float(omega) / C0
+    sine = float(np.sin(theta))
+    cosine = float(np.cos(theta))
+    dx = xx - float(x_ref)
+    dy = yy - float(y_sheet)
+    forward = np.exp(-1j * k * (sine * dx + cosine * dy))
+    backward = np.exp(-1j * k * (sine * dx - cosine * dy))
+    below = yy < float(y_sheet)
+    coefficient_r = complex(reflected)
+    coefficient_t = complex(transmitted)
+    going = np.where(below, forward, coefficient_t * forward)
+    coming = np.where(below, coefficient_r * backward, 0.0)
+    amplitude = going + coming
+    magnetic = (going - coming) / ETA0
+    return {
+        "ez": amplitude,
+        "hx": cosine * magnetic,
+        "hy": -sine * amplitude / ETA0,
+        "ex": cosine * amplitude,
+        "ey": sine * (coming - going),
+        "hz": -magnetic,
+    }
+
+
 def resistive_sheet_fields(
     y: NDArray,
     *,

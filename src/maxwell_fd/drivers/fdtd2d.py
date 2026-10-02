@@ -277,6 +277,9 @@ def _enforce_tm_pec(grid: YeeGrid2D, state: TMzState) -> None:
         state.ez[-1, :] = 0.0
         state.ez[:, 0] = 0.0
         state.ez[:, -1] = 0.0
+    elif grid.boundary is Boundary.PERIODIC_X:
+        state.ez[:, 0] = 0.0
+        state.ez[:, -1] = 0.0
 
 
 def _enforce_te_pec(grid: YeeGrid2D, state: TEzState) -> None:
@@ -285,6 +288,9 @@ def _enforce_te_pec(grid: YeeGrid2D, state: TEzState) -> None:
         state.ex[:, -1] = 0.0
         state.ey[0, :] = 0.0
         state.ey[-1, :] = 0.0
+    elif grid.boundary is Boundary.PERIODIC_X:
+        state.ex[:, 0] = 0.0
+        state.ex[:, -1] = 0.0
 
 
 def _require(grid: YeeGrid2D, polarization: Polarization) -> None:

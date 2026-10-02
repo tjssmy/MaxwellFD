@@ -930,9 +930,10 @@ susceptibility $\chi_{mm}^{nn}$ enters only the $s$/TE electric coefficient,
 \tilde\alpha \leftarrow \tilde\alpha + \frac{jk\sin^2\theta\,\chi_{mm}^{nn}}{2\cos\theta},
 \label{eq:chi-nn}
 \end{equation}
-which is the correction MaxwellMOM applies for a flat sheet. The first coded
-sheet uses tangential $\chi_{ee}$ and $\chi_{mm}$ only. Equation~\eqref{eq:chi-nn}
-is the check for the normal-component extension.
+which is the correction MaxwellMOM applies for a flat sheet. The coded TMz
+jump keeps $H_y$ unsplit and adds $\chi_{mm}^{nn}\partial_x H_{y,\mathrm{av}}$
+to~\eqref{eq:sc-h}. Equation~\eqref{eq:chi-nn} is the plane-wave reduction of
+that term. TEz does not carry it.
 
 \subsection{Symmetric cell}
 \label{sec:symmetric-cell}
@@ -1047,7 +1048,7 @@ Module & Responsibility\\
 \texttt{drivers.fdfd3d} & System~\eqref{eq:fdfd}, optional PML\\
 \texttt{analytics.cavity3d} & Frequency~\eqref{eq:semi} plus the $z$ term\\
 \texttt{analytics.mie3d} & Sphere series with $h_n^{(2)}$\\
-\texttt{materials.sheets} & Resistive $\sigma_{\mathrm{eff}}$ and tangential $\chi$\\
+\texttt{materials.sheets} & Resistive $\sigma_{\mathrm{eff}}$, tangential and normal $\chi$\\
 \texttt{operators.gstc} & Symmetric cell, append $H^\pm$\\
 \texttt{analytics.sheets} & $R,T$ from~\eqref{eq:R}, \eqref{eq:T}\\
 \bottomrule
@@ -1119,9 +1120,10 @@ sphere small enough to factor are in the code.
 \eqref{eq:sigma-sheet} is in the code. It is compared with~\eqref{eq:R},
 \eqref{eq:T}, and one stored MaxwellMOM value.
 \item Symmetric GSTC cell, Sec.~\ref{sec:symmetric-cell}. Tangential
-$\chi_{ee}$ and $\chi_{mm}$ are in the code and are compared
-with~\eqref{eq:R} and~\eqref{eq:T}. The normal susceptibility and the
-bianisotropic terms in~\eqref{eq:bianiso} remain later.
+$\chi_{ee}$ and $\chi_{mm}$, and the normal susceptibility
+$\chi_{mm}^{nn}$, are in the code and are compared
+with~\eqref{eq:R} and~\eqref{eq:T}. The bianisotropic terms
+in~\eqref{eq:bianiso} remain later.
 \item Dipole, Gaussian beam, near-to-far, Bloch phase on the periodic wrap.
 \item Profiling, Numba, iterative FDFD, GPU. Spatially varying and spatially
 dispersive $\chi$ remain later.

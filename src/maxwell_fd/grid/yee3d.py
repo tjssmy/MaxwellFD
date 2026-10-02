@@ -46,6 +46,8 @@ class YeeGrid3D:
             )
         if dx <= 0.0 or dy <= 0.0 or dz <= 0.0:
             raise ValueError(f"dx, dy, and dz must be positive, got {dx}, {dy}, {dz}")
+        if boundary is Boundary.PERIODIC_X:
+            raise ValueError("periodic-x is a 2D boundary")
         if boundary is Boundary.PEC and (nx < 2 or ny < 2 or nz < 2):
             raise ValueError("A PEC grid needs at least 2 cells in each direction")
         self.nx = int(nx)

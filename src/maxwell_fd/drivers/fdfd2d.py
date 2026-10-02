@@ -33,9 +33,13 @@ the sheet, and the matrix uses ``ε + σ/(jω)`` with that conductivity.
 
 A symmetric GSTC sheet is a different model. ``sheet`` splits the magnetic
 sample on one face into ``H^-`` and ``H^+`` and appends that pair after the
-electric unknowns. ``solve`` returns the electric prefix. The sheet keeps
-the unstretched curl, so it is not combined with a PML or an embedded
-conductor, and the spatial eigenproblem refuses it.
+electric unknowns. An optional ``x`` interval keeps a finite run of those
+samples. ``solve`` returns the electric prefix. The jump keeps the
+unstretched curl, so every cut sample must sit where the PML stretch is 1.
+``chi_mm_nn`` adds ``χ ∂_x H_y`` to the TMz jump and leaves TEz unchanged.
+The sheet is not combined with an embedded conductor, and the spatial
+eigenproblem refuses it. Passing ``incident`` makes the unknown the
+scattered field: the continuous incident wave enters through the sheet rows.
 """
 
 from __future__ import annotations
@@ -57,8 +61,14 @@ from maxwell_fd.operators.curl2d import (
     array_curl_h,
     build_curls,
 )
-from maxwell_fd.operators.gstc import gstc_system, sheet_face
-from maxwell_fd.operators.pml import PMLProfile, PMLSpec
+from maxwell_fd.operators.gstc import (
+    _cuts,
+    gstc_system,
+    incident_load,
+    magnetic_face,
+    sheet_face,
+)
+from maxwell_fd.operators.pml import Grade, PMLProfile, PMLSpec
 
 ComplexArray = NDArray[np.complex128]
 RealArray = NDArray[np.float64]
@@ -86,8 +96,6 @@ class FDFDOperator:
         self.profile: PMLProfile | None = None
         if pml is not None and pml.active:
             self.profile = PMLProfile(grid, pml)
-        if self.sheet is not None and self.profile is not None:
-            raise ValueError("symmetric sheet keeps the unstretched curl")
         if self.sheet is not None and self.conductors is not None:
             raise ValueError(
                 "symmetric sheet is not combined with an embedded conductor"
@@ -107,6 +115,10 @@ class FDFDOperator:
         )
         if self.sheet is not None:
             sheet_face(self.grid, self.layout, self.sheet)
+            if self.profile is not None:
+                _require_unstretched_sheet(
+                    self.grid, self.layout, self.sheet, self.profile
+                )
 
     def spatial_operator(self) -> tuple[sparse.csr_matrix, sparse.csr_matrix]:
         """``K`` and ``M`` of eq. (4.2), with real positive ``ε`` and ``μ``."""
@@ -151,18 +163,42 @@ class FDFDOperator:
         omega: float,
         impressed_j: NDArray,
         dirichlet: dict[str, NDArray] | None = None,
+        *,
+        incident: dict[str, NDArray] | None = None,
     ) -> ComplexArray:
-        """Electric unknowns for ``A e = -J``, with an optional boundary trace."""
+        """Electric unknowns for ``A e = -J``, with an optional boundary trace.
+
+        ``incident`` is the continuous incident wave on the full component
+        arrays, including the tangential magnetic field. The unknown is then
+        the scattered electric field and the wave enters through the sheet
+        rows. TMz needs ``ez`` and ``hx``. TEz needs ``ex``, ``ey``, and ``hz``.
+        """
         current = np.asarray(impressed_j, dtype=np.complex128).reshape(-1)
         if current.size != self.layout.n_e:
             raise ValueError(
                 f"impressed_j has length {current.size}, expected {self.layout.n_e}"
             )
+        sheet = self.sheet
+        if incident is not None and sheet is None:
+            raise ValueError("incident field requires a symmetric sheet")
+        if incident is not None and dirichlet is not None:
+            raise ValueError("incident field is not combined with a Dirichlet trace")
         rhs = -current
         if dirichlet is not None:
             rhs = rhs - self._dirichlet_load(omega, dirichlet)
         matrix = self.system_matrix(omega)
-        if matrix.shape[0] != rhs.size:
+        if incident is not None and sheet is not None:
+            electric, magnetic = _incident_parts(self.grid, incident)
+            load = incident_load(
+                self.grid, self.layout, sheet, omega, electric, magnetic
+            )
+            if load.size != matrix.shape[0]:
+                raise RuntimeError("incident load does not match the sheet system")
+            rhs = np.concatenate(
+                [rhs, np.zeros(load.size - rhs.size, dtype=np.complex128)]
+            )
+            rhs = rhs + load
+        elif matrix.shape[0] != rhs.size:
             extra = matrix.shape[0] - rhs.size
             rhs = np.concatenate([rhs, np.zeros(extra, dtype=np.complex128)])
         solved = np.asarray(spsolve(matrix, rhs), dtype=np.complex128)
@@ -217,6 +253,48 @@ class FDFDOperator:
             name: ampere[name] + 1j * float(omega) * permittivity[name] * electric[name]
             for name in ampere
         }
+
+
+def _require_unstretched_sheet(
+    grid: YeeGrid2D,
+    layout: Layout,
+    sheet: SymmetricSheet,
+    profile: PMLProfile,
+) -> None:
+    """Refuse a cut whose own sample sits inside a PML band."""
+    face = magnetic_face(grid, sheet.y)
+    cuts, _index = _cuts(grid, layout, face, sheet)
+    x_grade = profile.x_node if grid.polarization is Polarization.TMZ else profile.x_mid
+    y_grade = profile.y_mid
+    stretched = _graded(y_grade, face) or any(_graded(x_grade, cut.i) for cut in cuts)
+    if stretched:
+        raise ValueError("sheet must stay in the unstretched region")
+
+
+def _graded(grade: Grade, index: int) -> bool:
+    return float(grade.sigma[index]) != 0.0 or float(grade.kappa[index]) != 1.0
+
+
+def _incident_parts(
+    grid: YeeGrid2D, incident: dict[str, NDArray]
+) -> tuple[dict[str, NDArray], NDArray]:
+    shapes = grid.shapes()
+    if grid.polarization is Polarization.TMZ:
+        _present(incident, "ez", shapes["ez"])
+        _present(incident, "hx", shapes["hx"])
+        return {"ez": incident["ez"]}, incident["hx"]
+    _present(incident, "ex", shapes["ex"])
+    _present(incident, "ey", shapes["ey"])
+    _present(incident, "hz", shapes["hz"])
+    return {"ex": incident["ex"], "ey": incident["ey"]}, incident["hz"]
+
+
+def _present(incident: dict[str, NDArray], name: str, shape: tuple[int, int]) -> None:
+    if name not in incident:
+        raise ValueError(f"incident field needs {name}")
+    array = np.asarray(incident[name])
+    if array.shape != shape:
+        raise ValueError(f"incident {name} shape {array.shape} != {shape}")
 
 
 def _zero_fixed(

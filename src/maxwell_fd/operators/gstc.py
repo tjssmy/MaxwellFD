@@ -8,7 +8,15 @@ TMz; TEz uses the same susceptibilities with the cross-product signs of a
 is subtracted, and the two side values re-enter the tangential Ampere rows.
 TEz also returns their average to the normal electric samples on the cut.
 The unknowns appended after the electric vector are ``(H^-, H^+)`` at each
-free magnetic location on the face.
+free magnetic location on the face. A half-open ``x`` interval keeps a
+finite run of those locations. The default is the whole face. The jump
+uses the unstretched stencil, so a cut sample inside a PML is refused.
+``chi_mm_nn`` adds ``χ ∂_x H_y`` to the TMz magnetic jump. ``H_y`` is not
+split: the derivative is the average of the Faraday samples on the two
+electric rows, written as a second difference of ``E_z``. TEz ignores it.
+``incident_load`` moves a continuous incident wave onto the sheet rows.
+The electric rows of that load stay zero: the incident field already
+satisfies the bulk stencil up to Yee dispersion.
 """
 
 from __future__ import annotations
@@ -19,7 +27,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy import sparse
 
-from maxwell_fd.grid.yee2d import Boundary, Polarization, YeeGrid2D
+from maxwell_fd.grid.yee2d import Polarization, YeeGrid2D
 from maxwell_fd.materials.sheets import SymmetricSheet
 from maxwell_fd.operators.curl2d import Layout
 from maxwell_fd.utils.constants import EPS0, MU0
@@ -33,12 +41,13 @@ class _Cut:
     e_plus: int
     ey_here: int
     ey_right: int
+    i: int
 
 
 def sheet_face(grid: YeeGrid2D, layout: Layout, sheet: SymmetricSheet) -> int:
     """Magnetic-row index of ``sheet``, or an error when that face is unusable."""
     face = magnetic_face(grid, sheet.y)
-    _cuts(grid, layout, face)
+    _cuts(grid, layout, face, sheet)
     return face
 
 
@@ -56,9 +65,60 @@ def gstc_system(
     if omega == 0.0:
         raise ValueError("omega must be nonzero")
     face = magnetic_face(grid, sheet.y)
-    cuts, h_index = _cuts(grid, layout, face)
+    cuts, h_index = _cuts(grid, layout, face, sheet)
     reduced = _without_cut(curl_e, curl_h, mu_h, h_index, omega, base)
-    return _augment(grid, sheet, omega, reduced, cuts)
+    return _augment(grid, layout, sheet, omega, reduced, cuts)
+
+
+def incident_load(
+    grid: YeeGrid2D,
+    layout: Layout,
+    sheet: SymmetricSheet,
+    omega: float,
+    electric: dict[str, NDArray],
+    magnetic: NDArray,
+) -> NDArray:
+    """Augmented right-hand side for a scattered field driven by one incident wave.
+
+    ``electric`` is the incident tangential electric field on the full
+    arrays. ``magnetic`` is the incident tangential ``H`` on the full ``Hx``
+    or ``Hz`` array. The wave is continuous, so ``H^+ = H^-``. The sheet
+    rows receive minus that wave's GSTC residual. The electric rows stay
+    zero.
+    """
+    if omega == 0.0:
+        raise ValueError("omega must be nonzero")
+    face = magnetic_face(grid, sheet.y)
+    cuts, _h_index = _cuts(grid, layout, face, sheet)
+    periodic_y = grid.periodic_axes()[1]
+    j_plus = (face + 1) % grid.ny if periodic_y else face + 1
+    alpha = 1j * float(omega) * EPS0 * complex(sheet.chi_ee) / 2.0
+    beta = 1j * float(omega) * MU0 * complex(sheet.chi_mm) / 2.0
+    gamma = _chi_nn_gamma(sheet, omega, grid.dx)
+    rhs = np.zeros(layout.n_e + 2 * len(cuts), dtype=np.complex128)
+    if grid.polarization is Polarization.TEZ:
+        tangential = _complex_field(electric, "ex", grid.shapes()["ex"])
+        normal_h = _complex_field({"hz": magnetic}, "hz", grid.shapes()["hz"])
+        for k, cut in enumerate(cuts):
+            e_minus = tangential[cut.i, face]
+            e_plus = tangential[cut.i, j_plus]
+            h_face = normal_h[cut.i, face]
+            rhs[layout.n_e + 2 * k] = alpha * (e_minus + e_plus)
+            rhs[layout.n_e + 2 * k + 1] = -(e_plus - e_minus) + 2.0 * beta * h_face
+        return rhs
+    tangential = _complex_field(electric, "ez", grid.shapes()["ez"])
+    normal_h = _complex_field({"hx": magnetic}, "hx", grid.shapes()["hx"])
+    ez_id = _global_ids(layout.e)[0] if gamma != 0 else None
+    for k, cut in enumerate(cuts):
+        e_minus = tangential[cut.i, face]
+        e_plus = tangential[cut.i, j_plus]
+        h_face = normal_h[cut.i, face]
+        normal = 0.0
+        if gamma != 0 and ez_id is not None:
+            normal = _nn_on_field(grid, ez_id, tangential, cut.i, face, j_plus, gamma)
+        rhs[layout.n_e + 2 * k] = -alpha * (e_minus + e_plus) - normal
+        rhs[layout.n_e + 2 * k + 1] = -(e_plus - e_minus) - 2.0 * beta * h_face
+    return rhs
 
 
 def magnetic_face(grid: YeeGrid2D, y_sheet: float) -> int:
@@ -95,6 +155,7 @@ def _without_cut(
 
 def _augment(
     grid: YeeGrid2D,
+    layout: Layout,
     sheet: SymmetricSheet,
     omega: float,
     reduced: sparse.csr_matrix,
@@ -108,9 +169,14 @@ def _augment(
     data: list[NDArray] = [coo.data.astype(np.complex128, copy=False)]
     alpha = 1j * float(omega) * EPS0 * complex(sheet.chi_ee) / 2.0
     beta = 1j * float(omega) * MU0 * complex(sheet.chi_mm) / 2.0
+    gamma = _chi_nn_gamma(sheet, omega, grid.dx)
     dy = float(grid.dy)
     dx = float(grid.dx)
     tez = grid.polarization is Polarization.TEZ
+    ez_id = _global_ids(layout.e)[0] if gamma != 0 and not tez else None
+    periodic_y = grid.periodic_axes()[1]
+    face = magnetic_face(grid, sheet.y)
+    j_plus = (face + 1) % grid.ny if periodic_y else face + 1
     for k, cut in enumerate(cuts):
         hm = n_e + 2 * k
         hp = hm + 1
@@ -154,6 +220,9 @@ def _augment(
                 (cut.e_minus, cut.e_plus, hm, hp),
                 (-1.0, 1.0, beta, beta),
             )
+            if gamma != 0 and ez_id is not None:
+                for column, weight in _nn_columns(grid, ez_id, cut.i, face, j_plus):
+                    _add(rows, cols, data, hm, column, gamma * weight)
     size = n_e + 2 * n_cut
     return sparse.coo_matrix(
         (np.concatenate(data), (np.concatenate(rows), np.concatenate(cols))),
@@ -162,17 +231,96 @@ def _augment(
     ).tocsr()
 
 
-def _cuts(grid: YeeGrid2D, layout: Layout, face: int) -> tuple[list[_Cut], IntArray]:
-    periodic = grid.boundary is Boundary.PERIODIC
+def _chi_nn_gamma(sheet: SymmetricSheet, omega: float, dx: float) -> complex:
+    """Coefficient of one ``E_z`` second difference in the TMz jump.
+
+    ``H_y`` from Faraday is ``-∂_x E_z / (j ω μ_0)``. Averaging the two
+    electric rows and differentiating in ``x`` puts
+    ``χ_mm^nn / (2 j ω μ_0 Δx²)`` on ``E_z[i+1] - 2 E_z[i] + E_z[i-1]``.
+    """
+    normal = complex(sheet.chi_mm_nn)
+    if normal == 0:
+        return 0j
+    return normal / (2.0 * 1j * float(omega) * MU0 * float(dx) * float(dx))
+
+
+def _nn_points(
+    grid: YeeGrid2D, i: int, face: int, j_plus: int
+) -> list[tuple[int, int, float]]:
+    """``(i, j, weight)`` of the two-row second difference, before ``γ``."""
+    periodic_x = grid.periodic_axes()[0]
+    if periodic_x:
+        left, right = (i - 1) % grid.nx, (i + 1) % grid.nx
+    else:
+        left, right = i - 1, i + 1
+    points: list[tuple[int, int, float]] = []
+    for j in (face, j_plus):
+        points.append((left, j, 1.0))
+        points.append((i, j, -2.0))
+        points.append((right, j, 1.0))
+    return points
+
+
+def _nn_column(grid: YeeGrid2D, ez_id: IntArray, index: int, j: int) -> int:
+    periodic_x = grid.periodic_axes()[0]
+    if periodic_x:
+        return int(ez_id[index, j])
+    if index < 0 or index >= ez_id.shape[0] or j < 0 or j >= ez_id.shape[1]:
+        return -1
+    return int(ez_id[index, j])
+
+
+def _nn_columns(
+    grid: YeeGrid2D, ez_id: IntArray, i: int, face: int, j_plus: int
+) -> list[tuple[int, float]]:
+    columns: list[tuple[int, float]] = []
+    for index, j, weight in _nn_points(grid, i, face, j_plus):
+        column = _nn_column(grid, ez_id, index, j)
+        if column < 0:
+            raise ValueError("chi_mm_nn reaches the PEC wall")
+        columns.append((column, weight))
+    return columns
+
+
+def _nn_on_field(
+    grid: YeeGrid2D,
+    ez_id: IntArray,
+    ez: NDArray,
+    i: int,
+    face: int,
+    j_plus: int,
+    gamma: complex,
+) -> complex:
+    """``χ ∂_x H_y`` of one incident ``E_z``, on the free samples only."""
+    total = 0j
+    for index, j, weight in _nn_points(grid, i, face, j_plus):
+        column = _nn_column(grid, ez_id, index, j)
+        if column < 0:
+            raise ValueError("chi_mm_nn reaches the PEC wall")
+        total += weight * complex(ez[index, j])
+    return gamma * total
+
+
+def _cuts(
+    grid: YeeGrid2D,
+    layout: Layout,
+    face: int,
+    sheet: SymmetricSheet | None = None,
+) -> tuple[list[_Cut], IntArray]:
+    periodic_x, periodic_y = grid.periodic_axes()
     electric = _global_ids(layout.e)
     magnetic = _global_ids(layout.h)
     if grid.polarization is Polarization.TMZ:
+        sample = "hx"
         ez_id = electric[0]
         hx_id = magnetic[0]
-        j_plus = (face + 1) % grid.ny if periodic else face + 1
+        x = grid.coordinates(sample)[0]
+        j_plus = (face + 1) % grid.ny if periodic_y else face + 1
         cuts: list[_Cut] = []
         indices: list[int] = []
         for i in range(hx_id.shape[0]):
+            if not _in_span(float(x[i]), sheet):
+                continue
             h = int(hx_id[i, face])
             if h < 0:
                 continue
@@ -180,16 +328,20 @@ def _cuts(grid: YeeGrid2D, layout: Layout, face: int) -> tuple[list[_Cut], IntAr
             e_plus = int(ez_id[i, j_plus]) if j_plus < ez_id.shape[1] else -1
             if e_minus < 0 or e_plus < 0:
                 raise ValueError("sheet lies on the PEC wall")
-            cuts.append(_Cut(e_minus, e_plus, -1, -1))
+            cuts.append(_Cut(e_minus, e_plus, -1, -1, i))
             indices.append(h)
     else:
+        sample = "hz"
         ex_id = electric[0]
         ey_id = electric[1]
         hz_id = magnetic[0]
-        j_plus = (face + 1) % grid.ny if periodic else face + 1
+        x = grid.coordinates(sample)[0]
+        j_plus = (face + 1) % grid.ny if periodic_y else face + 1
         cuts = []
         indices = []
         for i in range(hz_id.shape[0]):
+            if not _in_span(float(x[i]), sheet):
+                continue
             h = int(hz_id[i, face])
             if h < 0:
                 continue
@@ -198,13 +350,32 @@ def _cuts(grid: YeeGrid2D, layout: Layout, face: int) -> tuple[list[_Cut], IntAr
             if e_minus < 0 or e_plus < 0:
                 raise ValueError("sheet lies on the PEC wall")
             ey_here = int(ey_id[i, face]) if i < ey_id.shape[0] else -1
-            right = i + 1
+            right = (i + 1) % grid.nx if periodic_x else i + 1
             ey_right = int(ey_id[right, face]) if right < ey_id.shape[0] else -1
-            cuts.append(_Cut(e_minus, e_plus, ey_here, ey_right))
+            cuts.append(_Cut(e_minus, e_plus, ey_here, ey_right, i))
             indices.append(h)
     if not cuts:
+        if sheet is not None and sheet.x0 is not None:
+            raise ValueError("sheet span misses every magnetic sample")
         raise ValueError("sheet face has no magnetic sample")
     return cuts, np.asarray(indices, dtype=np.int64)
+
+
+def _in_span(x: float, sheet: SymmetricSheet | None) -> bool:
+    if sheet is None or sheet.x0 is None or sheet.x1 is None:
+        return True
+    return float(sheet.x0) <= x < float(sheet.x1)
+
+
+def _complex_field(
+    fields: dict[str, NDArray], name: str, shape: tuple[int, int]
+) -> NDArray:
+    if name not in fields:
+        raise ValueError(f"incident field needs {name}")
+    array = np.asarray(fields[name], dtype=np.complex128)
+    if array.shape != shape:
+        raise ValueError(f"incident {name} shape {array.shape} != {shape}")
+    return array
 
 
 def _global_ids(dofs: tuple) -> list[IntArray]:

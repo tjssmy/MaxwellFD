@@ -35,8 +35,10 @@ def test_curl_h_is_transpose_of_curl_e() -> None:
     cases = (
         (Polarization.TMZ, Boundary.PEC),
         (Polarization.TMZ, Boundary.PERIODIC),
+        (Polarization.TMZ, Boundary.PERIODIC_X),
         (Polarization.TEZ, Boundary.PEC),
         (Polarization.TEZ, Boundary.PERIODIC),
+        (Polarization.TEZ, Boundary.PERIODIC_X),
     )
     for pol, boundary in cases:
         ops = build_curls(_grid(pol, boundary))
@@ -52,8 +54,10 @@ def test_matrix_matches_array_curl() -> None:
     cases = (
         (Polarization.TMZ, Boundary.PEC),
         (Polarization.TMZ, Boundary.PERIODIC),
+        (Polarization.TMZ, Boundary.PERIODIC_X),
         (Polarization.TEZ, Boundary.PEC),
         (Polarization.TEZ, Boundary.PERIODIC),
+        (Polarization.TEZ, Boundary.PERIODIC_X),
     )
     for pol, boundary in cases:
         grid = _grid(pol, boundary)
@@ -70,6 +74,12 @@ def test_matrix_matches_array_curl() -> None:
             electric["ex"][:, -1] = 0.0
             electric["ey"][0, :] = 0.0
             electric["ey"][-1, :] = 0.0
+        if boundary is Boundary.PERIODIC_X and pol is Polarization.TMZ:
+            electric["ez"][:, 0] = 0.0
+            electric["ez"][:, -1] = 0.0
+        if boundary is Boundary.PERIODIC_X and pol is Polarization.TEZ:
+            electric["ex"][:, 0] = 0.0
+            electric["ex"][:, -1] = 0.0
         got_e = ops.curl_e @ ops.layout.pack_e(electric)
         ref_e = ops.layout.pack_h(array_curl_e(grid, electric))
         got_h = ops.curl_h @ ops.layout.pack_h(magnetic)

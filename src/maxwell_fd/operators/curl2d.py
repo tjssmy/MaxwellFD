@@ -25,7 +25,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy import sparse
 
-from maxwell_fd.grid.yee2d import Boundary, Polarization, YeeGrid2D
+from maxwell_fd.grid.yee2d import Polarization, YeeGrid2D
 
 FloatArray = NDArray[np.float64]
 FieldArray = NDArray[np.float64] | NDArray[np.complex128]
@@ -173,14 +173,10 @@ def _layout_tm(
     fixed_h: dict[str, NDArray[np.bool_]] | None,
 ) -> Layout:
     shapes = grid.shapes()
-    if grid.boundary is Boundary.PERIODIC:
-        ez = _dof("ez", shapes["ez"], 0, grid.nx, 0, grid.ny)
-        hx = _dof("hx", shapes["hx"], 0, grid.nx, 0, grid.ny)
-        hy = _dof("hy", shapes["hy"], 0, grid.nx, 0, grid.ny)
-    else:
-        ez = _dof("ez", shapes["ez"], 1, grid.nx, 1, grid.ny)
-        hx = _dof("hx", shapes["hx"], 1, grid.nx, 0, grid.ny)
-        hy = _dof("hy", shapes["hy"], 0, grid.nx, 1, grid.ny)
+    px, py = grid.periodic_axes()
+    ez = _dof("ez", shapes["ez"], 0 if px else 1, grid.nx, 0 if py else 1, grid.ny)
+    hx = _dof("hx", shapes["hx"], 0 if px else 1, grid.nx, 0, grid.ny)
+    hy = _dof("hy", shapes["hy"], 0, grid.nx, 0 if py else 1, grid.ny)
     return Layout(
         e=(_drop(ez, fixed_e),),
         h=(_drop(hx, fixed_h), _drop(hy, fixed_h)),
@@ -193,14 +189,10 @@ def _layout_te(
     fixed_h: dict[str, NDArray[np.bool_]] | None,
 ) -> Layout:
     shapes = grid.shapes()
-    if grid.boundary is Boundary.PERIODIC:
-        hz = _dof("hz", shapes["hz"], 0, grid.nx, 0, grid.ny)
-        ex = _dof("ex", shapes["ex"], 0, grid.nx, 0, grid.ny)
-        ey = _dof("ey", shapes["ey"], 0, grid.nx, 0, grid.ny)
-    else:
-        hz = _dof("hz", shapes["hz"], 0, grid.nx, 0, grid.ny)
-        ex = _dof("ex", shapes["ex"], 0, grid.nx, 1, grid.ny)
-        ey = _dof("ey", shapes["ey"], 1, grid.nx, 0, grid.ny)
+    px, py = grid.periodic_axes()
+    hz = _dof("hz", shapes["hz"], 0, grid.nx, 0, grid.ny)
+    ex = _dof("ex", shapes["ex"], 0, grid.nx, 0 if py else 1, grid.ny)
+    ey = _dof("ey", shapes["ey"], 0 if px else 1, grid.nx, 0, grid.ny)
     return Layout(
         e=(_drop(ex, fixed_e), _drop(ey, fixed_e)),
         h=(_drop(hz, fixed_h),),
@@ -296,7 +288,7 @@ def _curls_tm(
     hx_id = _id_map(hx)
     hy_id = _id_map(hy)
     n_hx = hx.i.size
-    periodic = grid.boundary is Boundary.PERIODIC
+    px, py = grid.periodic_axes()
     dx, dy = grid.dx, grid.dy
 
     e_rows: list[NDArray[np.int64]] = []
@@ -312,13 +304,13 @@ def _curls_tm(
             e_data.append(block[2])
 
     hx_rows = np.arange(n_hx, dtype=np.int64)
-    j_hi = (hx.j + 1) % grid.ny if periodic else hx.j + 1
+    j_hi = (hx.j + 1) % grid.ny if py else hx.j + 1
     why = _weights(sy_hx, 1.0 / dy, hx.i, hx.j)
     add_e(_masked(hx_rows, ez_id[hx.i, j_hi], why))
     add_e(_masked(hx_rows, ez_id[hx.i, hx.j], -why))
 
     hy_rows = n_hx + np.arange(hy.i.size, dtype=np.int64)
-    i_hi = (hy.i + 1) % grid.nx if periodic else hy.i + 1
+    i_hi = (hy.i + 1) % grid.nx if px else hy.i + 1
     whx = _weights(sx_hy, 1.0 / dx, hy.i, hy.j)
     add_e(_masked(hy_rows, ez_id[i_hi, hy.j], -whx))
     add_e(_masked(hy_rows, ez_id[hy.i, hy.j], whx))
@@ -336,8 +328,8 @@ def _curls_tm(
             h_data.append(block[2])
 
     ez_rows = np.arange(ez.i.size, dtype=np.int64)
-    i_lo = (ez.i - 1) % grid.nx if periodic else ez.i - 1
-    j_lo = (ez.j - 1) % grid.ny if periodic else ez.j - 1
+    i_lo = (ez.i - 1) % grid.nx if px else ez.i - 1
+    j_lo = (ez.j - 1) % grid.ny if py else ez.j - 1
     wx = _weights(sx_ez, 1.0 / dx, ez.i, ez.j)
     wy = _weights(sy_ez, 1.0 / dy, ez.i, ez.j)
     add_h(_masked(ez_rows, hy_id[ez.i, ez.j], wx, offset=n_hx))
@@ -359,7 +351,7 @@ def _curls_te(
     ey_id = _id_map(ey)
     hz_id = _id_map(hz)
     n_ex = ex.i.size
-    periodic = grid.boundary is Boundary.PERIODIC
+    px, py = grid.periodic_axes()
     dx, dy = grid.dx, grid.dy
 
     e_rows: list[NDArray[np.int64]] = []
@@ -375,8 +367,8 @@ def _curls_te(
             e_data.append(block[2])
 
     hz_rows = np.arange(hz.i.size, dtype=np.int64)
-    i_hi = (hz.i + 1) % grid.nx if periodic else hz.i + 1
-    j_hi = (hz.j + 1) % grid.ny if periodic else hz.j + 1
+    i_hi = (hz.i + 1) % grid.nx if px else hz.i + 1
+    j_hi = (hz.j + 1) % grid.ny if py else hz.j + 1
     wx = _weights(sx_hz, 1.0 / dx, hz.i, hz.j)
     wy = _weights(sy_hz, 1.0 / dy, hz.i, hz.j)
     add_e(_masked(hz_rows, ey_id[i_hi, hz.j], wx, offset=n_ex))
@@ -397,13 +389,13 @@ def _curls_te(
             h_data.append(block[2])
 
     ex_rows = np.arange(n_ex, dtype=np.int64)
-    j_lo = (ex.j - 1) % grid.ny if periodic else ex.j - 1
+    j_lo = (ex.j - 1) % grid.ny if py else ex.j - 1
     wy_ex = _weights(sy_ex, 1.0 / dy, ex.i, ex.j)
     add_h(_masked(ex_rows, hz_id[ex.i, ex.j], wy_ex))
     add_h(_masked(ex_rows, hz_id[ex.i, j_lo], -wy_ex))
 
     ey_rows = n_ex + np.arange(ey.i.size, dtype=np.int64)
-    i_lo = (ey.i - 1) % grid.nx if periodic else ey.i - 1
+    i_lo = (ey.i - 1) % grid.nx if px else ey.i - 1
     wx_ey = _weights(sx_ey, 1.0 / dx, ey.i, ey.j)
     add_h(_masked(ey_rows, hz_id[ey.i, ey.j], -wx_ey))
     add_h(_masked(ey_rows, hz_id[i_lo, ey.j], wx_ey))
@@ -416,12 +408,17 @@ def _curls_te(
 def _array_curl_e_tm(
     grid: YeeGrid2D, ez: FieldArray, scale: CurlScale | None
 ) -> dict[str, FieldArray]:
-    if grid.boundary is Boundary.PERIODIC:
-        d_ez_dy = (np.roll(ez, -1, axis=1) - ez) / grid.dy
-        minus_d_ez_dx = -(np.roll(ez, -1, axis=0) - ez) / grid.dx
-    else:
-        d_ez_dy = (ez[:, 1:] - ez[:, :-1]) / grid.dy
-        minus_d_ez_dx = -(ez[1:, :] - ez[:-1, :]) / grid.dx
+    px, py = grid.periodic_axes()
+    d_ez_dy = (
+        (np.roll(ez, -1, axis=1) - ez) / grid.dy
+        if py
+        else (ez[:, 1:] - ez[:, :-1]) / grid.dy
+    )
+    minus_d_ez_dx = (
+        -(np.roll(ez, -1, axis=0) - ez) / grid.dx
+        if px
+        else -(ez[1:, :] - ez[:-1, :]) / grid.dx
+    )
     sy_hx, sx_hy, _, _ = _tm_factors(scale, grid)
     if sy_hx is not None:
         d_ez_dy = d_ez_dy * sy_hx
@@ -434,9 +431,16 @@ def _array_curl_h_tm(
     grid: YeeGrid2D, hx: FieldArray, hy: FieldArray, scale: CurlScale | None
 ) -> FieldArray:
     _, _, sx_ez, sy_ez = _tm_factors(scale, grid)
-    if grid.boundary is Boundary.PERIODIC:
+    px, py = grid.periodic_axes()
+    if px and py:
         d_hy_dx = (hy - np.roll(hy, 1, axis=0)) / grid.dx
         d_hx_dy = (hx - np.roll(hx, 1, axis=1)) / grid.dy
+    elif px:
+        dtype = np.result_type(hy, hx, np.float64)
+        d_hy_dx = np.zeros(grid.shapes()["ez"], dtype=dtype)
+        d_hx_dy = np.zeros(grid.shapes()["ez"], dtype=dtype)
+        d_hy_dx[:, 1:-1] = (hy[:, 1:-1] - np.roll(hy[:, 1:-1], 1, axis=0)) / grid.dx
+        d_hx_dy[:, 1:-1] = (hx[:, 1:] - hx[:, :-1]) / grid.dy
     else:
         d_hy_dx = np.zeros(grid.shapes()["ez"], dtype=np.result_type(hy, np.float64))
         d_hx_dy = np.zeros(grid.shapes()["ez"], dtype=np.result_type(hx, np.float64))
@@ -452,12 +456,17 @@ def _array_curl_h_tm(
 def _array_curl_e_te(
     grid: YeeGrid2D, ex: FieldArray, ey: FieldArray, scale: CurlScale | None
 ) -> dict[str, FieldArray]:
-    if grid.boundary is Boundary.PERIODIC:
-        d_ey_dx = (np.roll(ey, -1, axis=0) - ey) / grid.dx
-        d_ex_dy = (np.roll(ex, -1, axis=1) - ex) / grid.dy
-    else:
-        d_ey_dx = (ey[1:, :] - ey[:-1, :]) / grid.dx
-        d_ex_dy = (ex[:, 1:] - ex[:, :-1]) / grid.dy
+    px, py = grid.periodic_axes()
+    d_ey_dx = (
+        (np.roll(ey, -1, axis=0) - ey) / grid.dx
+        if px
+        else (ey[1:, :] - ey[:-1, :]) / grid.dx
+    )
+    d_ex_dy = (
+        (np.roll(ex, -1, axis=1) - ex) / grid.dy
+        if py
+        else (ex[:, 1:] - ex[:, :-1]) / grid.dy
+    )
     sx_hz, sy_hz, _, _ = _te_factors(scale, grid)
     if sx_hz is not None:
         d_ey_dx = d_ey_dx * sx_hz
@@ -470,8 +479,14 @@ def _array_curl_h_te(
     grid: YeeGrid2D, hz: FieldArray, scale: CurlScale | None
 ) -> dict[str, FieldArray]:
     _, _, sy_ex, sx_ey = _te_factors(scale, grid)
-    if grid.boundary is Boundary.PERIODIC:
+    px, py = grid.periodic_axes()
+    if px and py:
         d_hz_dy = (hz - np.roll(hz, 1, axis=1)) / grid.dy
+        minus_d_hz_dx = -(hz - np.roll(hz, 1, axis=0)) / grid.dx
+    elif px:
+        dtype = np.result_type(hz, np.float64)
+        d_hz_dy = np.zeros(grid.shapes()["ex"], dtype=dtype)
+        d_hz_dy[:, 1:-1] = (hz[:, 1:] - hz[:, :-1]) / grid.dy
         minus_d_hz_dx = -(hz - np.roll(hz, 1, axis=0)) / grid.dx
     else:
         dtype = np.result_type(hz, np.float64)

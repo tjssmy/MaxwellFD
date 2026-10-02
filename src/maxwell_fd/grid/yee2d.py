@@ -5,8 +5,9 @@ A grid is ``nx`` by ``ny`` cells of size ``dx`` by ``dy``. The domain is
 
 PEC stores the boundary electric samples and holds them at zero. Periodic
 identification drops the duplicate far side, so every stored sample is an
-unknown and curls wrap. Locations and shapes are Table 1 of
-``FD_LaTeX_Reference.tex``.
+unknown and curls wrap. ``Boundary.PERIODIC_X`` drops the duplicate ``x``
+side and keeps the PEC samples on ``y = 0`` and ``y = b``. Locations and
+shapes are Table 1 of ``FD_LaTeX_Reference.tex``.
 """
 
 from __future__ import annotations
@@ -25,10 +26,17 @@ class Polarization(Enum):
 
 
 class Boundary(Enum):
-    """Outer boundary treatment on all four sides."""
+    """Outer boundary treatment.
+
+    ``PEC`` and ``PERIODIC`` apply to all four sides. ``PERIODIC_X`` is
+    periodic in ``x`` and PEC in ``y``. The periodic identification is phase
+    one, so an oblique sheet closes when the width is an integer number of
+    transverse wavelengths.
+    """
 
     PEC = "pec"
     PERIODIC = "periodic"
+    PERIODIC_X = "periodic_x"
 
 
 class YeeGrid2D:
@@ -49,12 +57,22 @@ class YeeGrid2D:
             raise ValueError(f"dx and dy must be positive, got {dx}, {dy}")
         if boundary is Boundary.PEC and (nx < 2 or ny < 2):
             raise ValueError("A PEC grid needs at least 2 cells in each direction")
+        if boundary is Boundary.PERIODIC_X and ny < 2:
+            raise ValueError("A periodic-x grid needs at least 2 cells in y")
         self.nx = int(nx)
         self.ny = int(ny)
         self.dx = float(dx)
         self.dy = float(dy)
         self.polarization = polarization
         self.boundary = boundary
+
+    def periodic_axes(self) -> tuple[bool, bool]:
+        """Periodicity of the ``x`` face and the ``y`` face, phase one."""
+        if self.boundary is Boundary.PERIODIC:
+            return True, True
+        if self.boundary is Boundary.PERIODIC_X:
+            return True, False
+        return False, False
 
     @property
     def a(self) -> float:
@@ -69,14 +87,12 @@ class YeeGrid2D:
     def shapes(self) -> dict[str, tuple[int, int]]:
         """Full stored shape of each field component, including PEC boundaries."""
         nx, ny = self.nx, self.ny
-        periodic = self.boundary is Boundary.PERIODIC
+        px, py = self.periodic_axes()
+        nodes_x = nx if px else nx + 1
+        nodes_y = ny if py else ny + 1
         if self.polarization is Polarization.TMZ:
-            if periodic:
-                return {"ez": (nx, ny), "hx": (nx, ny), "hy": (nx, ny)}
-            return {"ez": (nx + 1, ny + 1), "hx": (nx + 1, ny), "hy": (nx, ny + 1)}
-        if periodic:
-            return {"hz": (nx, ny), "ex": (nx, ny), "ey": (nx, ny)}
-        return {"hz": (nx, ny), "ex": (nx, ny + 1), "ey": (nx + 1, ny)}
+            return {"ez": (nodes_x, nodes_y), "hx": (nodes_x, ny), "hy": (nx, nodes_y)}
+        return {"hz": (nx, ny), "ex": (nx, nodes_y), "ey": (nodes_x, ny)}
 
     def coordinates(
         self, component: str
@@ -98,21 +114,21 @@ def _axis_coords(
     grid: YeeGrid2D, component: str
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     nx, ny, dx, dy = grid.nx, grid.ny, grid.dx, grid.dy
-    periodic = grid.boundary is Boundary.PERIODIC
+    px, py = grid.periodic_axes()
     if grid.polarization is Polarization.TMZ:
         if component == "ez":
-            return _nodes(nx, dx, periodic), _nodes(ny, dy, periodic)
+            return _nodes(nx, dx, px), _nodes(ny, dy, py)
         if component == "hx":
-            return _nodes(nx, dx, periodic), _mids(ny, dy)
+            return _nodes(nx, dx, px), _mids(ny, dy)
         if component == "hy":
-            return _mids(nx, dx), _nodes(ny, dy, periodic)
+            return _mids(nx, dx), _nodes(ny, dy, py)
     else:
         if component == "hz":
             return _mids(nx, dx), _mids(ny, dy)
         if component == "ex":
-            return _mids(nx, dx), _nodes(ny, dy, periodic)
+            return _mids(nx, dx), _nodes(ny, dy, py)
         if component == "ey":
-            return _nodes(nx, dx, periodic), _mids(ny, dy)
+            return _nodes(nx, dx, px), _mids(ny, dy)
     raise KeyError(component)
 
 

@@ -4,9 +4,11 @@ import numpy as np
 
 from maxwell_fd.analytics.sheets import (
     chi_ee_from_zs,
+    oblique_sheet_fields,
     resistive_coefficients,
     resistive_sheet_fields,
     sheet_coefficients,
+    uniform_sheet_fields,
 )
 from maxwell_fd.drivers.fdfd2d import FDFDOperator
 from maxwell_fd.drivers.fdtd2d import cfl_timestep, step_tmz, zeros_tmz
@@ -91,6 +93,31 @@ def test_oblique_coefficients_follow_the_angle_factors() -> None:
         assert "theta" in str(exc)
     else:
         raise AssertionError("grazing incidence was accepted")
+
+
+def test_oblique_fields_match_the_normal_sheet() -> None:
+    omega = 2.0 * np.pi * C0 / 1.0
+    reflected, transmitted = sheet_coefficients(0.5, 0.25, omega / C0)
+    y = np.linspace(0.0, 4.0, 9)
+    x = np.array([0.0, 1.5])
+    fields = oblique_sheet_fields(
+        x,
+        y,
+        y_sheet=2.0,
+        omega=omega,
+        reflected=reflected,
+        transmitted=transmitted,
+        theta=0.0,
+    )
+    ez, hx, hz, ex = uniform_sheet_fields(
+        y, y_sheet=2.0, omega=omega, reflected=reflected, transmitted=transmitted
+    )
+    np.testing.assert_allclose(fields["ez"], np.broadcast_to(ez, fields["ez"].shape))
+    np.testing.assert_allclose(fields["hx"], np.broadcast_to(hx, fields["hx"].shape))
+    np.testing.assert_allclose(fields["hz"], np.broadcast_to(hz, fields["hz"].shape))
+    np.testing.assert_allclose(fields["ex"], np.broadcast_to(ex, fields["ex"].shape))
+    np.testing.assert_allclose(fields["ey"], 0.0, atol=1e-12)
+    np.testing.assert_allclose(fields["hy"], 0.0, atol=1e-12)
 
 
 def test_sheet_field_is_continuous_in_e_and_jumps_in_h() -> None:
