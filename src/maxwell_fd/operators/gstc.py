@@ -14,6 +14,10 @@ uses the unstretched stencil, so a cut sample inside a PML is refused.
 ``chi_mm_nn`` adds ``χ ∂_x H_y`` to the TMz magnetic jump. ``H_y`` is not
 split: the derivative is the average of the Faraday samples on the two
 electric rows, written as a second difference of ``E_z``. TEz ignores it.
+``chi_em`` and ``chi_me`` add ``(jω/c) χ (n̂ × field)`` to both
+polarizations. ``chi_em`` multiplies the averaged tangential ``H`` in the
+magnetic jump and ``chi_me`` multiplies the averaged tangential ``E`` in
+the electric jump.
 ``incident_load`` moves a continuous incident wave onto the sheet rows.
 The electric rows of that load stay zero: the incident field already
 satisfies the bulk stencil up to Yee dispersion.
@@ -30,7 +34,7 @@ from scipy import sparse
 from maxwell_fd.grid.yee2d import Polarization, YeeGrid2D
 from maxwell_fd.materials.sheets import SymmetricSheet
 from maxwell_fd.operators.curl2d import Layout
-from maxwell_fd.utils.constants import EPS0, MU0
+from maxwell_fd.utils.constants import C0, EPS0, MU0
 
 IntArray = NDArray[np.int64]
 
@@ -94,6 +98,8 @@ def incident_load(
     j_plus = (face + 1) % grid.ny if periodic_y else face + 1
     alpha = 1j * float(omega) * EPS0 * complex(sheet.chi_ee) / 2.0
     beta = 1j * float(omega) * MU0 * complex(sheet.chi_mm) / 2.0
+    kappa_em = _cross_kappa(sheet.chi_em, omega)
+    kappa_me = _cross_kappa(sheet.chi_me, omega)
     gamma = _chi_nn_gamma(sheet, omega, grid.dx)
     rhs = np.zeros(layout.n_e + 2 * len(cuts), dtype=np.complex128)
     if grid.polarization is Polarization.TEZ:
@@ -103,8 +109,14 @@ def incident_load(
             e_minus = tangential[cut.i, face]
             e_plus = tangential[cut.i, j_plus]
             h_face = normal_h[cut.i, face]
-            rhs[layout.n_e + 2 * k] = alpha * (e_minus + e_plus)
-            rhs[layout.n_e + 2 * k + 1] = -(e_plus - e_minus) + 2.0 * beta * h_face
+            rhs[layout.n_e + 2 * k] = (
+                alpha * (e_minus + e_plus) + 2.0 * kappa_em * h_face
+            )
+            rhs[layout.n_e + 2 * k + 1] = (
+                -(e_plus - e_minus)
+                + 2.0 * beta * h_face
+                - kappa_me * (e_minus + e_plus)
+            )
         return rhs
     tangential = _complex_field(electric, "ez", grid.shapes()["ez"])
     normal_h = _complex_field({"hx": magnetic}, "hx", grid.shapes()["hx"])
@@ -116,8 +128,12 @@ def incident_load(
         normal = 0.0
         if gamma != 0 and ez_id is not None:
             normal = _nn_on_field(grid, ez_id, tangential, cut.i, face, j_plus, gamma)
-        rhs[layout.n_e + 2 * k] = -alpha * (e_minus + e_plus) - normal
-        rhs[layout.n_e + 2 * k + 1] = -(e_plus - e_minus) - 2.0 * beta * h_face
+        rhs[layout.n_e + 2 * k] = (
+            -alpha * (e_minus + e_plus) - normal + 2.0 * kappa_em * h_face
+        )
+        rhs[layout.n_e + 2 * k + 1] = (
+            -(e_plus - e_minus) - 2.0 * beta * h_face - kappa_me * (e_minus + e_plus)
+        )
     return rhs
 
 
@@ -169,6 +185,8 @@ def _augment(
     data: list[NDArray] = [coo.data.astype(np.complex128, copy=False)]
     alpha = 1j * float(omega) * EPS0 * complex(sheet.chi_ee) / 2.0
     beta = 1j * float(omega) * MU0 * complex(sheet.chi_mm) / 2.0
+    kappa_em = _cross_kappa(sheet.chi_em, omega)
+    kappa_me = _cross_kappa(sheet.chi_me, omega)
     gamma = _chi_nn_gamma(sheet, omega, grid.dx)
     dy = float(grid.dy)
     dx = float(grid.dx)
@@ -191,7 +209,7 @@ def _augment(
                 data,
                 n_e + 2 * k,
                 (cut.e_minus, cut.e_plus, hm, hp),
-                (-alpha, -alpha, -1.0, 1.0),
+                (-alpha, -alpha, -1.0 - kappa_em, 1.0 - kappa_em),
             )
             _equation(
                 rows,
@@ -199,7 +217,7 @@ def _augment(
                 data,
                 n_e + 2 * k + 1,
                 (cut.e_minus, cut.e_plus, hm, hp),
-                (-1.0, 1.0, -beta, -beta),
+                (-1.0 + kappa_me, 1.0 + kappa_me, -beta, -beta),
             )
         else:
             _add(rows, cols, data, cut.e_minus, hm, 1.0 / dy)
@@ -210,7 +228,7 @@ def _augment(
                 data,
                 n_e + 2 * k,
                 (cut.e_minus, cut.e_plus, hm, hp),
-                (alpha, alpha, -1.0, 1.0),
+                (alpha, alpha, -1.0 - kappa_em, 1.0 - kappa_em),
             )
             _equation(
                 rows,
@@ -218,7 +236,7 @@ def _augment(
                 data,
                 n_e + 2 * k + 1,
                 (cut.e_minus, cut.e_plus, hm, hp),
-                (-1.0, 1.0, beta, beta),
+                (-1.0 + kappa_me, 1.0 + kappa_me, beta, beta),
             )
             if gamma != 0 and ez_id is not None:
                 for column, weight in _nn_columns(grid, ez_id, cut.i, face, j_plus):
@@ -229,6 +247,14 @@ def _augment(
         shape=(size, size),
         dtype=np.complex128,
     ).tocsr()
+
+
+def _cross_kappa(chi: complex, omega: float) -> complex:
+    """``j ω χ / (2 c)`` for one magneto-electric susceptibility."""
+    value = complex(chi)
+    if value == 0:
+        return 0j
+    return 1j * float(omega) * value / (2.0 * C0)
 
 
 def _chi_nn_gamma(sheet: SymmetricSheet, omega: float, dx: float) -> complex:

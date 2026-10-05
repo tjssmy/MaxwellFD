@@ -544,6 +544,36 @@ def test_chi_mm_nn_derivative_is_on_the_tmz_jump() -> None:
     _check_normal_load()
 
 
+def test_magnetoelectric_rows_follow_the_jumps() -> None:
+    omega = 2.0 * np.pi * C0
+    chi_ee, chi_mm = 0.5, 0.25
+    chi_em, chi_me = 0.2, 0.35
+    alpha = 1j * omega * EPS0 * chi_ee / 2.0
+    beta = 1j * omega * MU0 * chi_mm / 2.0
+    kappa_em = 1j * omega * chi_em / (2.0 * C0)
+    kappa_me = 1j * omega * chi_me / (2.0 * C0)
+    for pol in (Polarization.TMZ, Polarization.TEZ):
+        _assert_cross_cut(
+            pol,
+            omega,
+            chi_ee,
+            chi_mm,
+            chi_em,
+            chi_me,
+            alpha,
+            beta,
+            kappa_em,
+            kappa_me,
+        )
+    try:
+        SymmetricSheet(3.5, 0.5, 0.25, chi_em=np.nan)
+    except ValueError as exc:
+        assert "chi" in str(exc)
+    else:
+        raise AssertionError("a non-finite chi_em was accepted")
+    _check_cross_load()
+
+
 def test_periodic_oblique_sheet_matches_analytic_coefficients() -> None:
     mixed = _periodic_errors(0.5, 0.25, 0.4, points=10)
     assert mixed[Polarization.TMZ] < NN_TMZ_BAR, mixed[Polarization.TMZ]
@@ -557,6 +587,29 @@ def test_periodic_oblique_sheet_matches_analytic_coefficients() -> None:
     assert tangential[Polarization.TMZ] < NN_TMZ_BAR
     assert tangential[Polarization.TEZ] < NN_TEZ_BAR
     assert abs(mixed[Polarization.TEZ] - tangential[Polarization.TEZ]) < 1e-12
+
+
+# One transverse period at 30°, height 4λ. χ_ee = 0.5, χ_mm = 0.25,
+# χ_mm^nn = 0.4, χ_em = χ_me = 0.2. At 10 cells per wavelength the packed
+# electric error is 1.404e-1 (TMz) and 1.235e-1 (TEz). Four times that
+# resolution drops both by more than half. Pure χ_em = χ_me = 0.2, with the
+# other susceptibilities zero, is 9.390e-2 (TMz) and 9.832e-2 (TEz) at 20
+# cells per wavelength.
+ME_TMZ_BAR = 0.24
+ME_TEZ_BAR = 0.21
+ME_PURE_BAR = 0.16
+
+
+def test_periodic_magnetoelectric_sheet_matches_analytic_coefficients() -> None:
+    mixed = _periodic_errors(0.5, 0.25, 0.4, 10, chi_em=0.2, chi_me=0.2)
+    assert mixed[Polarization.TMZ] < ME_TMZ_BAR, mixed[Polarization.TMZ]
+    assert mixed[Polarization.TEZ] < ME_TEZ_BAR, mixed[Polarization.TEZ]
+    fine = _periodic_errors(0.5, 0.25, 0.4, 40, chi_em=0.2, chi_me=0.2)
+    assert fine[Polarization.TMZ] < mixed[Polarization.TMZ] / 2.0
+    assert fine[Polarization.TEZ] < mixed[Polarization.TEZ] / 2.0
+    for pol in (Polarization.TMZ, Polarization.TEZ):
+        pure = _periodic_error(pol, 0.0, 0.0, 0.0, 20, chi_em=0.2, chi_me=0.2)
+        assert pure < ME_PURE_BAR, (pol, pure)
 
 
 def _check_normal_load() -> None:
@@ -605,11 +658,224 @@ def _check_normal_load() -> None:
     )
 
 
+def _assert_cross_cut(
+    pol: Polarization,
+    omega: float,
+    chi_ee: complex,
+    chi_mm: complex,
+    chi_em: complex,
+    chi_me: complex,
+    alpha: complex,
+    beta: complex,
+    kappa_em: complex,
+    kappa_me: complex,
+) -> None:
+    grid = YeeGrid2D(6, 8, 1.0, 1.0, pol, Boundary.PERIODIC_X)
+    bare = (
+        UniformIsotropic().sample_tm(grid)
+        if pol is Polarization.TMZ
+        else UniformIsotropic().sample_te(grid)
+    )
+    y_sheet = 3.5
+    plain = FDFDOperator(
+        grid, bare, sheet=SymmetricSheet(y_sheet, chi_ee, chi_mm, chi_mm_nn=0.4)
+    )
+    zero = FDFDOperator(
+        grid,
+        bare,
+        sheet=SymmetricSheet(
+            y_sheet, chi_ee, chi_mm, chi_mm_nn=0.4, chi_em=0.0, chi_me=0.0
+        ),
+    )
+    np.testing.assert_allclose(
+        zero.system_matrix(omega).toarray(),
+        plain.system_matrix(omega).toarray(),
+        atol=1e-12,
+    )
+    sheet = SymmetricSheet(y_sheet, chi_ee, chi_mm, chi_em=chi_em, chi_me=chi_me)
+    operator = FDFDOperator(grid, bare, sheet=sheet)
+    matrix = operator.system_matrix(omega).tocsr()
+    face = magnetic_face(grid, y_sheet)
+    cuts, _index = _cuts(grid, operator.layout, face, sheet)
+    chosen = next(
+        cut
+        for cut in cuts
+        if pol is Polarization.TMZ or (cut.ey_here >= 0 and cut.ey_right >= 0)
+    )
+    row_h = operator.layout.n_e + 2 * cuts.index(chosen)
+    row_e = row_h + 1
+    hm = row_h
+    hp = row_e
+    if pol is Polarization.TMZ:
+        expected_h = (alpha, alpha, -1.0 - kappa_em, 1.0 - kappa_em)
+        expected_e = (-1.0 + kappa_me, 1.0 + kappa_me, beta, beta)
+    else:
+        expected_h = (-alpha, -alpha, -1.0 - kappa_em, 1.0 - kappa_em)
+        expected_e = (-1.0 + kappa_me, 1.0 + kappa_me, -beta, -beta)
+        ignored = FDFDOperator(
+            grid,
+            bare,
+            sheet=SymmetricSheet(
+                y_sheet,
+                chi_ee,
+                chi_mm,
+                chi_mm_nn=0.4,
+                chi_em=chi_em,
+                chi_me=chi_me,
+            ),
+        )
+        difference = matrix - ignored.system_matrix(omega)
+        np.testing.assert_allclose(difference.toarray(), 0.0, atol=1e-12)
+    columns = (chosen.e_minus, chosen.e_plus, hm, hp)
+    for row, expected in ((row_h, expected_h), (row_e, expected_e)):
+        got = [matrix[row, column] for column in columns]
+        np.testing.assert_allclose(got, expected, atol=1e-12)
+
+
+def _check_cross_load() -> None:
+    wavelength = 10.0
+    omega = 2.0 * np.pi * C0 / wavelength
+    wavenumber = omega / C0
+    theta = np.deg2rad(30.0)
+    chi_ee, chi_mm, chi_nn = 0.5, 0.25, 0.4
+    chi_em, chi_me = 0.2, -0.15
+    alpha = 1j * omega * EPS0 * chi_ee / 2.0
+    beta = 1j * omega * MU0 * chi_mm / 2.0
+    kappa_em = 1j * omega * chi_em / (2.0 * C0)
+    kappa_me = 1j * omega * chi_me / (2.0 * C0)
+    for pol in (Polarization.TMZ, Polarization.TEZ):
+        grid = YeeGrid2D(6, 8, 1.0, 1.0, pol, Boundary.PERIODIC_X)
+        bare = (
+            UniformIsotropic().sample_tm(grid)
+            if pol is Polarization.TMZ
+            else UniformIsotropic().sample_te(grid)
+        )
+        y_sheet = 3.5
+        sheet = SymmetricSheet(
+            y_sheet,
+            chi_ee,
+            chi_mm,
+            chi_mm_nn=chi_nn,
+            chi_em=chi_em,
+            chi_me=chi_me,
+        )
+        operator = FDFDOperator(grid, bare, sheet=sheet)
+        if pol is Polarization.TMZ:
+            x, y = grid.coordinates("ez")
+            xx, yy = np.meshgrid(x, y, indexing="ij")
+            phase = np.exp(
+                -1j * wavenumber * (np.sin(theta) * xx + np.cos(theta) * (yy - y_sheet))
+            )
+            hx_x, hx_y = grid.coordinates("hx")
+            hxx, hyy = np.meshgrid(hx_x, hx_y, indexing="ij")
+            magnetic = (
+                np.cos(theta)
+                * np.exp(
+                    -1j
+                    * wavenumber
+                    * (np.sin(theta) * hxx + np.cos(theta) * (hyy - y_sheet))
+                )
+                / ETA0
+            )
+            fields = {"ez": phase}
+            packed = operator.layout.pack_e({"ez": phase})
+        else:
+            x, y = grid.coordinates("ex")
+            xx, yy = np.meshgrid(x, y, indexing="ij")
+            phase = np.exp(
+                -1j * wavenumber * (np.sin(theta) * xx + np.cos(theta) * (yy - y_sheet))
+            )
+            electric = np.cos(theta) * phase
+            ey_x, ey_y = grid.coordinates("ey")
+            eyx, eyy = np.meshgrid(ey_x, ey_y, indexing="ij")
+            normal = -np.sin(theta) * np.exp(
+                -1j
+                * wavenumber
+                * (np.sin(theta) * eyx + np.cos(theta) * (eyy - y_sheet))
+            )
+            hz_x, hz_y = grid.coordinates("hz")
+            hxx, hyy = np.meshgrid(hz_x, hz_y, indexing="ij")
+            magnetic = (
+                -np.exp(
+                    -1j
+                    * wavenumber
+                    * (np.sin(theta) * hxx + np.cos(theta) * (hyy - y_sheet))
+                )
+                / ETA0
+            )
+            fields = {"ex": electric, "ey": normal}
+            packed = operator.layout.pack_e({"ex": electric, "ey": normal})
+        load = incident_load(grid, operator.layout, sheet, omega, fields, magnetic)
+        np.testing.assert_allclose(load[: operator.layout.n_e], 0.0, atol=0.0)
+        matrix = operator.system_matrix(omega)
+        face = magnetic_face(grid, y_sheet)
+        cuts, _index = _cuts(grid, operator.layout, face, sheet)
+        state = np.zeros(matrix.shape[0], dtype=np.complex128)
+        state[: operator.layout.n_e] = packed
+        for index, cut in enumerate(cuts):
+            state[operator.layout.n_e + 2 * index] = magnetic[cut.i, face]
+            state[operator.layout.n_e + 2 * index + 1] = magnetic[cut.i, face]
+        residual = matrix @ state
+        np.testing.assert_allclose(
+            residual[operator.layout.n_e :], -load[operator.layout.n_e :], atol=1e-8
+        )
+        flat_sheet = SymmetricSheet(
+            y_sheet, chi_ee, chi_mm, chi_em=chi_em, chi_me=chi_me
+        )
+        flat_operator = FDFDOperator(grid, bare, sheet=flat_sheet)
+        below = np.exp(1j * wavenumber * 0.5)
+        above = np.exp(-1j * wavenumber * 0.5)
+        if pol is Polarization.TMZ:
+            flat = np.exp(-1j * wavenumber * (yy - y_sheet))
+            flat_h = np.full(grid.shapes()["hx"], 1.0 / ETA0, dtype=np.complex128)
+            flat_fields = {"ez": flat}
+            h_face = 1.0 / ETA0
+            expect_h = -alpha * (below + above) + 2.0 * kappa_em * h_face
+            expect_e = (
+                -(above - below) - 2.0 * beta * h_face - kappa_me * (below + above)
+            )
+        else:
+            flat = np.exp(-1j * wavenumber * (yy - y_sheet))
+            flat_h = np.full(grid.shapes()["hz"], -1.0 / ETA0, dtype=np.complex128)
+            flat_fields = {
+                "ex": flat,
+                "ey": np.zeros(grid.shapes()["ey"], dtype=np.complex128),
+            }
+            h_face = -1.0 / ETA0
+            expect_h = alpha * (below + above) + 2.0 * kappa_em * h_face
+            expect_e = (
+                -(above - below) + 2.0 * beta * h_face - kappa_me * (below + above)
+            )
+        flat_load = incident_load(
+            grid, flat_operator.layout, flat_sheet, omega, flat_fields, flat_h
+        )
+        np.testing.assert_allclose(
+            flat_load[flat_operator.layout.n_e], expect_h, atol=1e-9
+        )
+        np.testing.assert_allclose(
+            flat_load[flat_operator.layout.n_e + 1], expect_e, atol=1e-9
+        )
+
+
 def _periodic_errors(
-    chi_ee: complex, chi_mm: complex, chi_nn: complex, points: int
+    chi_ee: complex,
+    chi_mm: complex,
+    chi_nn: complex,
+    points: int,
+    *,
+    chi_em: complex = 0.0,
+    chi_me: complex = 0.0,
 ) -> dict[Polarization, float]:
     return {
-        pol: _periodic_error(pol, chi_ee, chi_mm, chi_nn, points)
+        pol: _periodic_error(
+            pol,
+            chi_ee,
+            chi_mm,
+            chi_nn,
+            points,
+            chi_em=chi_em,
+            chi_me=chi_me,
+        )
         for pol in (Polarization.TMZ, Polarization.TEZ)
     }
 
@@ -620,6 +886,9 @@ def _periodic_error(
     chi_mm: complex,
     chi_nn: complex,
     points: int,
+    *,
+    chi_em: complex = 0.0,
+    chi_me: complex = 0.0,
 ) -> float:
     wavelength = 1.0
     theta = np.deg2rad(30.0)
@@ -638,7 +907,14 @@ def _periodic_error(
     operator = FDFDOperator(
         grid,
         bare,
-        sheet=SymmetricSheet(y_sheet, chi_ee, chi_mm, chi_mm_nn=chi_nn),
+        sheet=SymmetricSheet(
+            y_sheet,
+            chi_ee,
+            chi_mm,
+            chi_mm_nn=chi_nn,
+            chi_em=chi_em,
+            chi_me=chi_me,
+        ),
     )
     reflected, transmitted = sheet_coefficients(
         chi_ee,
@@ -647,6 +923,8 @@ def _periodic_error(
         theta=theta,
         te=pol is Polarization.TEZ,
         chi_mm_nn=chi_nn,
+        chi_em=chi_em,
+        chi_me=chi_me,
     )
     if pol is Polarization.TMZ:
         x, y = grid.coordinates("ez")

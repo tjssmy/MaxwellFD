@@ -35,11 +35,18 @@ def sheet_coefficients(
     theta: float = 0.0,
     te: bool = False,
     chi_mm_nn: complex = 0.0,
+    chi_em: complex = 0.0,
+    chi_me: complex = 0.0,
 ) -> tuple[complex, complex]:
     """Return ``(R, T)`` from eq:R and eq:T.
 
     ``te=False`` is TMz and ``te=True`` is TEz. ``theta`` is in radians.
     ``chi_mm_nn`` is added to the TMz electric coefficient, eq:chi-nn.
+    ``chi_em`` and ``chi_me`` are the magneto-electric strengths. With both
+    zero the coefficients stay the tangential split. A reciprocal sheet uses
+    ``chi_me = chi_em``. The reflective lock is ``chi_em = chi_me = -2j/k``
+    with the other susceptibilities zero, which gives ``R = 1`` and ``T = 0``
+    at normal incidence.
     """
     if not np.isfinite(k) or k <= 0.0:
         raise ValueError(f"k must be positive, got {k}")
@@ -58,11 +65,27 @@ def sheet_coefficients(
         if normal != 0:
             sine = float(np.sin(theta))
             alpha = alpha + 1j * float(k) * sine**2 * normal / (2.0 * cosine)
-    electric = (1.0 - alpha) / (1.0 + alpha)
-    magnetic = (1.0 - beta) / (1.0 + beta)
-    reflected = 0.5 * (electric - magnetic)
-    transmitted = 0.5 * (electric + magnetic)
-    return complex(reflected), complex(transmitted)
+    cross_h = 1j * float(k) * complex(chi_em) / 2.0
+    cross_e = 1j * float(k) * complex(chi_me) / 2.0
+    if cross_h == 0 and cross_e == 0:
+        electric = (1.0 - alpha) / (1.0 + alpha)
+        magnetic = (1.0 - beta) / (1.0 + beta)
+        reflected = 0.5 * (electric - magnetic)
+        transmitted = 0.5 * (electric + magnetic)
+        return complex(reflected), complex(transmitted)
+    coupling = np.array(
+        [
+            [1.0 + alpha + cross_h, 1.0 + alpha - cross_h],
+            [-1.0 - beta + cross_e, 1.0 + beta + cross_e],
+        ],
+        dtype=np.complex128,
+    )
+    drive = np.array([1.0 - alpha + cross_h, 1.0 - beta - cross_e], dtype=np.complex128)
+    try:
+        amplitudes = np.linalg.solve(coupling, drive)
+    except np.linalg.LinAlgError as exc:
+        raise ValueError("sheet coefficients are singular") from exc
+    return complex(amplitudes[0]), complex(amplitudes[1])
 
 
 def resistive_coefficients(

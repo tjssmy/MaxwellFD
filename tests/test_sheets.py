@@ -95,6 +95,50 @@ def test_oblique_coefficients_follow_the_angle_factors() -> None:
         raise AssertionError("grazing incidence was accepted")
 
 
+def test_magnetoelectric_coefficients_match_maxwellmom() -> None:
+    # MaxwellMOM rt_from_chi_omega, k=2π, θ=30°, χ_ee=0.5, χ_mm=0.25,
+    # χ_em=χ_me=0.2. TMz carries χ_mm^nn=0.4. TEz does not.
+    k = 2.0 * np.pi
+    theta = np.deg2rad(30.0)
+    tmz = sheet_coefficients(
+        0.5, 0.25, k, theta=theta, chi_mm_nn=0.4, chi_em=0.2, chi_me=0.2
+    )
+    np.testing.assert_allclose(
+        tmz[0], -0.0767221468578202 + 0.02350555860236617j, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        tmz[1], -0.28189570322658675 - 0.9201076182619031j, atol=1e-12
+    )
+    tez = sheet_coefficients(
+        0.5, 0.25, k, theta=theta, te=True, chi_mm_nn=0.4, chi_em=0.2, chi_me=0.2
+    )
+    np.testing.assert_allclose(
+        tez[0], 0.3289774245948114 - 0.09119301316023115j, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        tez[1], -0.2984353288307522 - 1.076600964092956j, atol=1e-12
+    )
+    without_normal = sheet_coefficients(
+        0.5, 0.25, k, theta=theta, te=True, chi_em=0.2, chi_me=0.2
+    )
+    np.testing.assert_allclose(tez[0], without_normal[0], atol=1e-12)
+    lock = -2.0j / k
+    for te in (False, True):
+        reflected, transmitted = sheet_coefficients(
+            0.0, 0.0, k, chi_em=lock, chi_me=lock, te=te
+        )
+        np.testing.assert_allclose(reflected, 1.0, atol=1e-12)
+        np.testing.assert_allclose(transmitted, 0.0, atol=1e-12)
+    swapped = sheet_coefficients(0.5, 0.25, k, theta=theta, chi_em=0.2, chi_me=-0.2)
+    assert abs(swapped[0] - tmz[0]) > 1e-3
+    try:
+        sheet_coefficients(0.0, 0.0, k, chi_em=-2.0j / k, chi_me=2.0j / k)
+    except ValueError as exc:
+        assert "singular" in str(exc)
+    else:
+        raise AssertionError("a singular magneto-electric sheet was accepted")
+
+
 def test_oblique_fields_match_the_normal_sheet() -> None:
     omega = 2.0 * np.pi * C0 / 1.0
     reflected, transmitted = sheet_coefficients(0.5, 0.25, omega / C0)

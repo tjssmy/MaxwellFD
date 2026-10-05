@@ -1302,6 +1302,9 @@ and the PML depth on each side. The susceptibilities are
 $\chi_{ee}=\chi_{mm}=-2j/k$, so a uniform sheet of this normal has
 $R=T=0$ at $\theta=0$. Passing \texttt{--chi-ee}, \texttt{--chi-mm}, and
 \texttt{--chi-nn} together replaces that absorber.
+\texttt{--chi-em} and \texttt{--chi-me} default to zero. The absorber
+rejects a nonzero value. Section~\ref{sec:ex-finite-cross} sets them
+with the three real susceptibilities.
 Section~\ref{sec:ex-finite-oblique} is that run at $30^\circ$. The domain leaves two wavelengths of vacuum
 between the sheet and the PML. The sheet lies on the magnetic face half a
 cell below mid-height. The local jump is the normal-incidence cell of
@@ -1383,6 +1386,9 @@ degrees, measured from the sheet normal, and the default is $30$.
 \texttt{--wavelength}, \texttt{--points}, and \texttt{--height} are the
 free-space wavelength, the cells per wavelength, and the domain height in
 wavelengths. The defaults are $1$, $20$, and $4$.
+\texttt{--chi-em} and \texttt{--chi-me} are the magneto-electric
+strengths. They default to zero, and a zero stays out of the folder
+name. Section~\ref{sec:ex-periodic-cross} sets both to $0.2$.
 
 The sheet spans the whole magnetic face, half a cell below mid-height.
 The width is one transverse period, $\lambda/\sin\theta$, so the phase of
@@ -1485,10 +1491,116 @@ $6\lambda$ of the sheet.}
 \end{figure}
 
 \clearpage
+\subsection{Periodic magneto-electric sheet}
+\label{sec:ex-periodic-cross}
+
+\begin{verbatim}
+python examples/fdfd/2d/periodic_sheet.py --chi-em 0.2 --chi-me 0.2
+\end{verbatim}
+
+The geometry and the tangential susceptibilities are those of
+Sec.~\ref{sec:ex-periodic}. $\chi_{em}=\chi_{me}=0.2$ is the reciprocal
+magneto-electric pair, and both polarizations carry it.
+$\chi_{mm}^{nn}$ remains on the TMz jump. A uniform sheet with these
+values has $R=-0.07672+0.02351j$ and $T=-0.2819-0.9201j$ in TMz, and
+$R=0.329-0.09119j$ and $T=-0.2984-1.077j$ in TEz. The reflective lock
+$\chi_{em}=\chi_{me}=-2j/k$, with the other susceptibilities zero, gives
+$R=1$ and $T=0$ at normal incidence.
+
+The run writes
+\begin{center}
+\path{periodic_sheet_lam1_theta30_points20_height4_chiee0.5_chimm0.25_chinn0.4_chiem0.2_chime0.2/}
+\end{center}
+with \texttt{domain.png} and \texttt{periodic\_sheet.png}. The cell is
+again $2\lambda$ wide and $4\lambda$ tall, a $40\times 80$ grid at
+$\Delta=0.05$. The field figure shows $\mathrm{Re}\,E_z$ (TMz) and
+$\mathrm{Re}\,E_x$ (TEz). The columns are FD, Analytic, and
+FD$-$Analytic. On this grid the annotated $L^2$ errors are $8.38\%$
+(TMz) and $7.62\%$ (TEz). The regression uses the same susceptibilities
+at $10$ cells per wavelength, with the bars $0.24$ and $0.21$.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.48\textwidth]{../examples/fdfd/2d/periodic_sheet_lam1_theta30_points20_height4_chiee0.5_chimm0.25_chinn0.4_chiem0.2_chime0.2/domain.png}
+\caption{Periodic magneto-electric domain. The blue line is the sheet on
+a magnetic face. The green lines are the analytic trace on the $y$ ends.
+The dashed purple lines mark the periodic identification of the $x$
+ends. The susceptibilities add $\chi_{em}=\chi_{me}=0.2$ to the
+tangential and normal values of Figure~\ref{fig:periodic-domain}.}
+\label{fig:periodic-cross-domain}
+\end{figure}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{../examples/fdfd/2d/periodic_sheet_lam1_theta30_points20_height4_chiee0.5_chimm0.25_chinn0.4_chiem0.2_chime0.2/periodic_sheet.png}
+\caption{Periodic oblique sheet at $\chi_{ee}=0.5$, $\chi_{mm}=0.25$,
+$\chi_{mm}^{nn}=0.4$, $\chi_{em}=\chi_{me}=0.2$, $\lambda=1$,
+$\theta=30^\circ$, and a height of $4\lambda$, on a $40\times 80$ grid
+at $\Delta=0.05$. The rows are $\mathrm{Re}\,E_z$ (TMz) and
+$\mathrm{Re}\,E_x$ (TEz). The columns are the Yee field, the analytic
+field, and their difference. The annotated $L^2$ is the packed free
+electric vector.}
+\label{fig:periodic-cross-fields}
+\end{figure}
+
+\clearpage
+\subsection{Finite magneto-electric sheet}
+\label{sec:ex-finite-cross}
+
+\begin{verbatim}
+python examples/fdfd/2d/finite_sheet.py \
+    --chi-ee 0.5 --chi-mm 0.25 --chi-nn 0.4 \
+    --chi-em 0.2 --chi-me 0.2 --theta 30
+\end{verbatim}
+
+The geometry is the $10\lambda$ sheet of Sec.~\ref{sec:ex-finite}: $20$
+cells per wavelength, $12$ PML cells on each side, and two wavelengths of
+vacuum between the sheet and the band. The susceptibilities and the
+incidence are those of Sec.~\ref{sec:ex-periodic-cross}. The unknown is
+the scattered field. A uniform sheet transmits $|E_z|=0.96$ and
+$|E_x|=0.97$.
+
+The run writes
+\begin{center}
+\path{finite_sheet_lam1_points20_theta30_pml12_sheet10_chiee0.5_chimm0.25_chinn0.4_chiem0.2_chime0.2/}
+\end{center}
+with \texttt{domain.png} and \texttt{finite\_sheet.png}. The field figure
+shows $\mathrm{Re}\,E_z$ (TMz) and $\mathrm{Re}\,E_x$ (TEz). The columns
+are the incident wave, the scattered field, and the total field. On this
+grid the annotated means, over the central $6\lambda$ of the sheet, are a
+lit-side $|E|$ of $1.01$ and a shadow $|E|$ of $0.97$ (TMz), and $0.85$
+and $0.96$ (TEz). The shadow sits on the uniform transmission, and the
+ends diffract.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{../examples/fdfd/2d/finite_sheet_lam1_points20_theta30_pml12_sheet10_chiee0.5_chimm0.25_chinn0.4_chiem0.2_chime0.2/domain.png}
+\caption{Finite magneto-electric domain. The blue segment is the
+$10\lambda$ sheet on a magnetic face. The orange frame is the PML band
+on all four sides. The incidence is $30^\circ$ and the susceptibilities
+add $\chi_{em}=\chi_{me}=0.2$ to the values of
+Figure~\ref{fig:finite-oblique-domain}.}
+\label{fig:finite-cross-domain}
+\end{figure}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{../examples/fdfd/2d/finite_sheet_lam1_points20_theta30_pml12_sheet10_chiee0.5_chimm0.25_chinn0.4_chiem0.2_chime0.2/finite_sheet.png}
+\caption{Finite sheet at $\chi_{ee}=0.5$, $\chi_{mm}=0.25$,
+$\chi_{mm}^{nn}=0.4$, $\chi_{em}=\chi_{me}=0.2$, $\lambda=1$, length
+$10\lambda$, $\theta=30^\circ$, at $20$ cells per wavelength with $12$
+PML cells on each side. The rows are $\mathrm{Re}\,E_z$ (TMz) and
+$\mathrm{Re}\,E_x$ (TEz). The columns are the incident wave, the
+scattered field, and the total field. The annotated means are the lit
+side and the shadow over the central $6\lambda$ of the sheet.}
+\label{fig:finite-cross-fields}
+\end{figure}
+
+\clearpage
 \section{Tests and later slices}
 \label{sec:tests}
 
-The suite is \texttt{pytest} from the project root, seventy-eight tests in
+The suite is \texttt{pytest} from the project root, eighty-one tests in
 \texttt{tests/}. Milestone~1 checks the curls, the adjoint, the cavity
 eigenvalues, the manufactured solve, the invariant and the CFL growth, and
 the fully discrete dispersion, with relative or absolute bars from
@@ -1540,7 +1652,16 @@ error at $20$ cells per wavelength stays under $0.17$. The example in
 Sec.~\ref{sec:ex-periodic} annotates $9.63\%$ and $8.91\%$ at $20$ cells
 per wavelength. The $10\lambda$ sheet with those susceptibilities at
 $30^\circ$ is the open example in Sec.~\ref{sec:ex-finite-oblique}. Its
-lit and shadow means stay with that figure. A failing
+lit and shadow means stay with that figure. The magneto-electric pair, on
+that same periodic cell with $\chi_{em}=\chi_{me}=0.2$ added to
+$\chi_{ee}=0.5$, $\chi_{mm}=0.25$, and $\chi_{mm}^{nn}=0.4$, stays under
+$0.24$ (TMz) and $0.21$ (TEz) at $10$ cells per wavelength. Four times
+that resolution drops both errors by more than half. With only
+$\chi_{em}=\chi_{me}=0.2$, the error at $20$ cells per wavelength stays
+under $0.16$ in both polarizations. The example in
+Sec.~\ref{sec:ex-periodic-cross} annotates $8.38\%$ and $7.62\%$ at $20$
+cells per wavelength. The $10\lambda$ sheet with those susceptibilities
+at $30^\circ$ is the open example in Sec.~\ref{sec:ex-finite-cross}. A failing
 bar is a reason to refine the grid in that test, not to widen the bar.
 
 The formulation note already fixes the formulas for the slices that remain
@@ -1551,8 +1672,9 @@ a layout. Those two solves use the Dirichlet trace. The open PEC cylinder
 of Sec.~\ref{sec:ex-pec}, the open dielectric cylinder of
 Sec.~\ref{sec:ex-diel}, the open dielectric sphere of
 Sec.~\ref{sec:ex-sphere}, the finite absorbing sheet of
-Sec.~\ref{sec:ex-finite}, and the finite oblique sheet of
-Sec.~\ref{sec:ex-finite-oblique} are the solves that stretch the derivatives.
+Sec.~\ref{sec:ex-finite}, the finite oblique sheet of
+Sec.~\ref{sec:ex-finite-oblique}, and the finite magneto-electric sheet of
+Sec.~\ref{sec:ex-finite-cross} are the solves that stretch the derivatives.
 
 \clearpage
 \begin{thebibliography}{9}

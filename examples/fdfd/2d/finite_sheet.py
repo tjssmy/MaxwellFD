@@ -5,6 +5,9 @@ With no susceptibilities on the command line, ``chi_ee = chi_mm = -2j/k``
 is the normal-incidence perfect absorber and ``chi_mm_nn`` is zero.
 ``--chi-ee``, ``--chi-mm``, and ``--chi-nn`` replace that absorber with
 three real values. ``chi_nn`` enters the TMz jump and leaves TEz unchanged.
+``--chi-em`` and ``--chi-me`` add the magneto-electric coupling on both
+polarizations. They default to zero, stay out of the folder name at that
+default, and the absorber rejects a nonzero value.
 A convolutional PML backs the PEC wall on all four sides. ``--theta`` is
 the incidence angle in degrees, measured from the sheet normal, and the
 default is 0. The unknown is the scattered field. Results go in
@@ -94,6 +97,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--chi-ee", type=float, default=None)
     parser.add_argument("--chi-mm", type=float, default=None)
     parser.add_argument("--chi-nn", type=float, default=None)
+    parser.add_argument("--chi-em", type=float, default=0.0)
+    parser.add_argument("--chi-me", type=float, default=0.0)
     args = parser.parse_args(argv)
     if not np.isfinite(args.wavelength) or args.wavelength <= 0.0:
         parser.error("wavelength must be positive")
@@ -105,9 +110,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("pml must be a positive cell count")
     if not np.isfinite(args.sheet) or args.sheet <= 0.0:
         parser.error("sheet length must be positive")
+    if not np.isfinite(args.chi_em):
+        parser.error("chi-em must be finite")
+    if not np.isfinite(args.chi_me):
+        parser.error("chi-me must be finite")
     supplied = (args.chi_ee, args.chi_mm, args.chi_nn)
     if all(value is None for value in supplied):
         args.absorber = True
+        if args.chi_em != 0.0 or args.chi_me != 0.0:
+            parser.error("the absorbing sheet rejects a nonzero --chi-em or --chi-me")
     elif any(value is None for value in supplied):
         parser.error("pass --chi-ee, --chi-mm, and --chi-nn together")
     else:
@@ -188,7 +199,16 @@ def _solve(pol: Polarization, args: argparse.Namespace) -> dict:
         grid,
         bare,
         PMLSpec.box(args.pml),
-        sheet=SymmetricSheet(y_sheet, chi_ee, chi_mm, x0, x1, chi_mm_nn=chi_nn),
+        sheet=SymmetricSheet(
+            y_sheet,
+            chi_ee,
+            chi_mm,
+            x0,
+            x1,
+            chi_mm_nn=chi_nn,
+            chi_em=args.chi_em,
+            chi_me=args.chi_me,
+        ),
     )
     if pol is Polarization.TMZ:
         ex, ey = grid.coordinates("ez")
@@ -265,6 +285,8 @@ def _solve(pol: Polarization, args: argparse.Namespace) -> dict:
         "chi_ee": chi_ee,
         "chi_mm": chi_mm,
         "chi_nn": chi_nn,
+        "chi_em": complex(args.chi_em),
+        "chi_me": complex(args.chi_me),
         "k": k,
         "theta": theta,
         "name": name,
@@ -464,10 +486,18 @@ def main() -> None:
         parameters["chiee"] = args.chi_ee
         parameters["chimm"] = args.chi_mm
         parameters["chinn"] = args.chi_nn
+        if args.chi_em != 0.0:
+            parameters["chiem"] = args.chi_em
+        if args.chi_me != 0.0:
+            parameters["chime"] = args.chi_me
         heading = (
             rf"Finite sheet, $\chi_{{ee}}={args.chi_ee:g}$, "
             rf"$\chi_{{mm}}={args.chi_mm:g}$, $\chi_{{mm}}^{{nn}}={args.chi_nn:g}$"
         )
+        if args.chi_em != 0.0 or args.chi_me != 0.0:
+            heading += (
+                rf", $\chi_{{em}}={args.chi_em:g}$, $\chi_{{me}}={args.chi_me:g}$"
+            )
     folder = output_dir(__file__, **parameters)
     tm = _solve(Polarization.TMZ, args)
     te = _solve(Polarization.TEZ, args)
@@ -496,6 +526,8 @@ def main() -> None:
             theta=tm["theta"],
             te=pol is Polarization.TEZ,
             chi_mm_nn=tm["chi_nn"],
+            chi_em=tm["chi_em"],
+            chi_me=tm["chi_me"],
         )
         return f"R {_fmt(reflected)} T {_fmt(transmitted)}"
 
@@ -503,8 +535,12 @@ def main() -> None:
         chi = tm["chi_ee"]
         prefix = f"chi_ee = chi_mm = {chi.real:.6g}{chi.imag:+.6g}j"
     else:
+        cross = ""
+        if args.chi_em != 0.0 or args.chi_me != 0.0:
+            cross = f" chi_em={args.chi_em:g} chi_me={args.chi_me:g}"
         prefix = (
-            f"chi_ee={args.chi_ee:g} chi_mm={args.chi_mm:g} chi_nn={args.chi_nn:g}  "
+            f"chi_ee={args.chi_ee:g} chi_mm={args.chi_mm:g} chi_nn={args.chi_nn:g}"
+            f"{cross}  "
             f"TMz {_coeff(Polarization.TMZ)}  TEz {_coeff(Polarization.TEZ)}"
         )
     print(

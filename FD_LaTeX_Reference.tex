@@ -864,7 +864,7 @@ E_z^+ - E_z^- &= -\mu_0\,\partial_t M_x. \label{eq:jump-ez}
 \end{align}
 $H_y$ is the normal field. It is not split.
 
-Bianisotropic coupling, when it is added, extends~\eqref{eq:pol} to
+Bianisotropic coupling extends~\eqref{eq:pol} to
 \begin{equation}
 \mathbf{P}_s = \varepsilon_0\chi_{ee}\cdot\mathbf{E}_{\mathrm{av}}
 + c_0^{-1}\chi_{em}\cdot\mathbf{H}_{\mathrm{av}},
@@ -873,8 +873,15 @@ Bianisotropic coupling, when it is added, extends~\eqref{eq:pol} to
 + \eta_0^{-1}\chi_{me}\cdot\mathbf{E}_{\mathrm{av}}.
 \label{eq:bianiso}
 \end{equation}
-The reflective lock used in MaxwellMOM is a particular $\chi_{em}$ inside this
-extension. It is not part of the first sheet implementation.
+A reciprocal sheet uses $\chi_{me}=\chi_{em}$. That equality is the scalar
+form of the jump match in MaxwellMOM's \texttt{rt\_from\_chi\_omega}. The
+reflective lock is $\chi_{em}=\chi_{me}=-2j/k$ with the other
+susceptibilities zero, and at normal incidence it gives $R=1$, $T=0$.
+On both polarizations the frequency-domain magnetic jump gains a term
+$-(j\omega/c)\chi_{em} H_{\mathrm{av}}$ and the electric jump gains
+$(j\omega/c)\chi_{me} E_{\mathrm{av}}$. $\chi_{mm}^{nn}$ stays on the TMz
+magnetic jump. When $\chi_{em}=\chi_{me}=0$ the coefficients
+remain~\eqref{eq:R} and~\eqref{eq:T}.
 
 \subsection{Reflection and transmission}
 \label{sec:rt}
@@ -933,7 +940,10 @@ susceptibility $\chi_{mm}^{nn}$ enters only the $s$/TE electric coefficient,
 which is the correction MaxwellMOM applies for a flat sheet. The coded TMz
 jump keeps $H_y$ unsplit and adds $\chi_{mm}^{nn}\partial_x H_{y,\mathrm{av}}$
 to~\eqref{eq:sc-h}. Equation~\eqref{eq:chi-nn} is the plane-wave reduction of
-that term. TEz does not carry it.
+that term. TEz does not carry it. Nonzero $\chi_{em}$ and $\chi_{me}$
+replace the split~\eqref{eq:rt-system} by the same two jump rows. Their
+coefficients are $jk\chi_{em}/2$ and $jk\chi_{me}/2$, with no extra factor
+of $\cos\theta$.
 
 \subsection{Symmetric cell}
 \label{sec:symmetric-cell}
@@ -1048,9 +1058,9 @@ Module & Responsibility\\
 \texttt{drivers.fdfd3d} & System~\eqref{eq:fdfd}, optional PML\\
 \texttt{analytics.cavity3d} & Frequency~\eqref{eq:semi} plus the $z$ term\\
 \texttt{analytics.mie3d} & Sphere series with $h_n^{(2)}$\\
-\texttt{materials.sheets} & Resistive $\sigma_{\mathrm{eff}}$, tangential and normal $\chi$\\
+\texttt{materials.sheets} & Resistive $\sigma_{\mathrm{eff}}$, tangential, normal, and magneto-electric $\chi$\\
 \texttt{operators.gstc} & Symmetric cell, append $H^\pm$\\
-\texttt{analytics.sheets} & $R,T$ from~\eqref{eq:R}, \eqref{eq:T}\\
+\texttt{analytics.sheets} & $R,T$ from~\eqref{eq:R}, \eqref{eq:T}, and the magneto-electric jumps\\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -1093,7 +1103,8 @@ the analytic targets.
 \item $e^{j\omega t}$, and the four SI constants, copied numerically.
 \item Sheet reflection and transmission,~\eqref{eq:R} and~\eqref{eq:T},
 including the oblique factors and the $\chi_{mm}^{nn}$ correction, which are
-the formulas behind \texttt{rt\_from\_chi}.
+the formulas behind \texttt{rt\_from\_chi}. The magneto-electric pair is
+checked against one stored value of \texttt{rt\_from\_chi\_omega}.
 \item The map~\eqref{eq:chi-from-z} from a surface impedance to $\chi_{ee}$.
 \item Mie and Fresnel results as external checks, not as shared functions.
 \end{itemize}
@@ -1120,10 +1131,10 @@ sphere small enough to factor are in the code.
 \eqref{eq:sigma-sheet} is in the code. It is compared with~\eqref{eq:R},
 \eqref{eq:T}, and one stored MaxwellMOM value.
 \item Symmetric GSTC cell, Sec.~\ref{sec:symmetric-cell}. Tangential
-$\chi_{ee}$ and $\chi_{mm}$, and the normal susceptibility
-$\chi_{mm}^{nn}$, are in the code and are compared
-with~\eqref{eq:R} and~\eqref{eq:T}. The bianisotropic terms
-in~\eqref{eq:bianiso} remain later.
+$\chi_{ee}$ and $\chi_{mm}$, the normal susceptibility
+$\chi_{mm}^{nn}$, and the magneto-electric pair $\chi_{em}$, $\chi_{me}$
+are in the code and are compared with the analytic reflection and
+transmission.
 \item Dipole, Gaussian beam, near-to-far, Bloch phase on the periodic wrap.
 \item Profiling, Numba, iterative FDFD, GPU. Spatially varying and spatially
 dispersive $\chi$ remain later.

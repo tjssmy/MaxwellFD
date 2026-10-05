@@ -4,8 +4,11 @@ The sheet spans the cell. ``x`` is periodic with phase one and the width is
 one transverse period, so an oblique wave closes without a Bloch phase.
 The ``y`` ends carry the analytic total field. ``--chi-nn`` is the normal
 magnetic susceptibility. It changes TMz and leaves TEz on the tangential
-formula. ``--theta`` is degrees from the sheet normal. Results go in
-``periodic_sheet_<parameters>/`` next to this script.
+formula. ``--chi-em`` and ``--chi-me`` are the magneto-electric strengths.
+A reciprocal sheet uses the same value for both. They default to zero and
+stay out of the folder name at that default. ``--theta`` is degrees from
+the sheet normal. Results go in ``periodic_sheet_<parameters>/`` next to
+this script.
 """
 
 from __future__ import annotations
@@ -62,6 +65,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--chi-ee", type=float, default=CHI_EE)
     parser.add_argument("--chi-mm", type=float, default=CHI_MM)
     parser.add_argument("--chi-nn", type=float, default=CHI_NN)
+    parser.add_argument("--chi-em", type=float, default=0.0)
+    parser.add_argument("--chi-me", type=float, default=0.0)
     parser.add_argument(
         "--wavelength",
         type=float,
@@ -86,7 +91,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=HEIGHT,
         help=f"Domain height in wavelengths (default: {HEIGHT:g}).",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    for name in ("chi_ee", "chi_mm", "chi_nn", "chi_em", "chi_me"):
+        if not np.isfinite(getattr(args, name)):
+            parser.error(f"{name.replace('_', '-')} must be finite")
+    return args
 
 
 def _grid_shape(wavelength: float, points: int, theta_deg: float, height: float):
@@ -125,7 +134,14 @@ def _solve(pol: Polarization, args: argparse.Namespace) -> dict:
     operator = FDFDOperator(
         grid,
         bare,
-        sheet=SymmetricSheet(y_sheet, args.chi_ee, args.chi_mm, chi_mm_nn=args.chi_nn),
+        sheet=SymmetricSheet(
+            y_sheet,
+            args.chi_ee,
+            args.chi_mm,
+            chi_mm_nn=args.chi_nn,
+            chi_em=args.chi_em,
+            chi_me=args.chi_me,
+        ),
     )
     reflected, transmitted = sheet_coefficients(
         args.chi_ee,
@@ -134,6 +150,8 @@ def _solve(pol: Polarization, args: argparse.Namespace) -> dict:
         theta=theta,
         te=pol is Polarization.TEZ,
         chi_mm_nn=args.chi_nn,
+        chi_em=args.chi_em,
+        chi_me=args.chi_me,
     )
     if pol is Polarization.TMZ:
         x, y = grid.coordinates("ez")
@@ -264,10 +282,13 @@ def plot_fields(path: Path, tm: dict, te: dict, args: argparse.Namespace) -> Non
                     },
                 )
             fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
+    cross = ""
+    if args.chi_em != 0.0 or args.chi_me != 0.0:
+        cross = rf", $\chi_{{em}}={args.chi_em:g}$, $\chi_{{me}}={args.chi_me:g}$"
     fig.suptitle(
         rf"Periodic sheet, $\theta={args.theta:g}^\circ$, "
         rf"$\chi_{{ee}}={args.chi_ee:g}$, $\chi_{{mm}}={args.chi_mm:g}$, "
-        rf"$\chi_{{mm}}^{{nn}}={args.chi_nn:g}$, $\lambda={args.wavelength:g}$",
+        rf"$\chi_{{mm}}^{{nn}}={args.chi_nn:g}${cross}, $\lambda={args.wavelength:g}$",
         fontsize=12,
     )
     fig.savefig(path, dpi=140)
@@ -298,10 +319,13 @@ def plot_domain(path: Path, result: dict, args: argparse.Namespace) -> None:
     ax.set_ylim(0.0, height)
     ax.set_xlabel("x")
     ax.set_ylabel("y")
+    cross = ""
+    if args.chi_em != 0.0 or args.chi_me != 0.0:
+        cross = rf", $\chi_{{em}}={args.chi_em:g}$, $\chi_{{me}}={args.chi_me:g}$"
     ax.set_title(
         "One transverse period\n"
-        rf"$\theta={args.theta:g}^\circ$, $\chi_{{mm}}^{{nn}}={args.chi_nn:g}$, "
-        rf"$\Delta={float(result['dx']):.4g}$"
+        rf"$\theta={args.theta:g}^\circ$, $\chi_{{mm}}^{{nn}}={args.chi_nn:g}$"
+        rf"{cross}, $\Delta={float(result['dx']):.4g}$"
     )
     ax.legend(
         handles=[
@@ -327,16 +351,20 @@ def main() -> None:
     from run_dir import output_dir
 
     args = _parse_args()
-    folder = output_dir(
-        __file__,
-        lam=args.wavelength,
-        theta=args.theta,
-        points=args.points,
-        height=args.height,
-        chiee=args.chi_ee,
-        chimm=args.chi_mm,
-        chinn=args.chi_nn,
-    )
+    parameters: dict[str, float | int] = {
+        "lam": args.wavelength,
+        "theta": args.theta,
+        "points": args.points,
+        "height": args.height,
+        "chiee": args.chi_ee,
+        "chimm": args.chi_mm,
+        "chinn": args.chi_nn,
+    }
+    if args.chi_em != 0.0:
+        parameters["chiem"] = args.chi_em
+    if args.chi_me != 0.0:
+        parameters["chime"] = args.chi_me
+    folder = output_dir(__file__, **parameters)
     tm = _solve(Polarization.TMZ, args)
     te = _solve(Polarization.TEZ, args)
     plot_fields(folder / "periodic_sheet.png", tm, te, args)

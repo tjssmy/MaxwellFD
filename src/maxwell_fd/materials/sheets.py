@@ -9,7 +9,9 @@ TEz current. The normal component is left alone.
 
 A symmetric GSTC sheet sits on a magnetic face, halfway between electric
 rows. ``SymmetricSheet`` holds the tangential susceptibilities and the
-normal magnetic susceptibility ``chi_mm_nn``. The FDFD driver replaces
+normal magnetic susceptibility ``chi_mm_nn``. ``chi_em`` and ``chi_me``
+are the magneto-electric strengths in front of ``n̂ × H`` and ``n̂ × E``.
+The FDFD driver replaces
 that face. An optional ``x`` interval keeps a finite run of the magnetic
 samples; the default is the whole face. This module does not paint ``σ``
 for it.
@@ -32,7 +34,10 @@ class SymmetricSheet:
     ``chi_ee`` and ``chi_mm`` are the tangential susceptibilities in
     eq:sc-h and eq:sc-e. ``chi_mm_nn`` is the normal magnetic
     susceptibility. It enters the TMz jump through ``∂_x H_y`` and is zero
-    at normal incidence. The sheet sits halfway between electric rows.
+    at normal incidence. ``chi_em`` multiplies ``n̂ × H`` in the electric
+    surface polarization and ``chi_me`` multiplies ``n̂ × E`` in the
+    magnetic one. A reciprocal sheet uses ``chi_me = chi_em``. The sheet
+    sits halfway between electric rows.
     ``x0`` and ``x1`` select the half-open run ``x0 <= x < x1`` of magnetic
     samples on that face. Omitting both covers the whole face.
     """
@@ -43,6 +48,8 @@ class SymmetricSheet:
     x0: float | None = None
     x1: float | None = None
     chi_mm_nn: complex = 0.0
+    chi_em: complex = 0.0
+    chi_me: complex = 0.0
 
     def __post_init__(self) -> None:
         if not np.isfinite(self.y):
@@ -50,17 +57,22 @@ class SymmetricSheet:
         electric = complex(self.chi_ee)
         magnetic = complex(self.chi_mm)
         normal = complex(self.chi_mm_nn)
-        if (
-            not np.isfinite(electric)
-            or not np.isfinite(magnetic)
-            or not np.isfinite(normal)
+        cross_h = complex(self.chi_em)
+        cross_e = complex(self.chi_me)
+        if not all(
+            np.isfinite(value)
+            for value in (electric, magnetic, normal, cross_h, cross_e)
         ):
             raise ValueError(
-                f"chi must be finite, got {self.chi_ee}, {self.chi_mm}, {self.chi_mm_nn}"
+                "chi must be finite, "
+                f"got {self.chi_ee}, {self.chi_mm}, {self.chi_mm_nn}, "
+                f"{self.chi_em}, {self.chi_me}"
             )
         object.__setattr__(self, "chi_ee", electric)
         object.__setattr__(self, "chi_mm", magnetic)
         object.__setattr__(self, "chi_mm_nn", normal)
+        object.__setattr__(self, "chi_em", cross_h)
+        object.__setattr__(self, "chi_me", cross_e)
         if (self.x0 is None) != (self.x1 is None):
             raise ValueError("sheet extent needs both x0 and x1")
         if self.x0 is None:
