@@ -62,10 +62,14 @@ constants $c_0$, $\varepsilon_0$, $\mu_0$, and $\eta_0$ are the SI values used
 by MaxwellMOM. In a uniform lossless medium $c=1/\sqrt{\mu\varepsilon}$ and
 $\eta=\sqrt{\mu/\varepsilon}$.
 
-The impressed current is the source. A plane wave, a dipole, and a Gaussian
-beam are later special cases of $\mathbf{J}$ or of a total-field/scattered-field
-boundary. Milestone~1 does not inject those sources. Its free-space check is a
-periodic eigenmode, and its cavity check is a source-free resonance.
+The impressed current is the source. A $z$-directed Hertzian dipole places
+the moment $I\ell$ on one $E_z$ sample,
+$J_z=I\ell/(\Delta x\Delta y\Delta z)$, and the 3D solve compares the
+electric field with the outgoing spherical wave. A plane wave and a
+Gaussian beam remain later special cases of $\mathbf{J}$ or of a
+total-field/scattered-field boundary. Milestone~1 does not inject those
+sources. Its free-space check is a periodic eigenmode, and its cavity
+check is a source-free resonance.
 
 \subsection{Two-dimensional reductions}
 \label{sec:polarizations}
@@ -821,7 +825,7 @@ in the table above the 3D curls. Later slices add comparisons that this
 note already fixes the formulas for, and that the code does not yet run:
 
 \begin{itemize}
-\item a dipole, a Gaussian beam, a near-to-far integral, and a Bloch cell.
+\item a Gaussian beam, a near-to-far integral, and a Bloch cell.
 \end{itemize}
 
 Prescribed external maps are checked by confirming that the samples the
@@ -1052,6 +1056,7 @@ Module & Responsibility\\
 \texttt{analytics.fresnel} & Slab fields~\eqref{eq:fresnel-field}, \eqref{eq:fresnel-te}\\
 \texttt{analytics.mie2d} & Cylinder series~\eqref{eq:mie-tm}, \eqref{eq:mie-te}\\
 \texttt{analytics.green2d} & Outgoing line current, $H_0^{(2)}$\\
+\texttt{analytics.dipole3d} & Hertzian dipole, outgoing spherical wave\\
 \texttt{grid.yee3d} & 3D counts, spacings, boundary, shapes, coordinates\\
 \texttt{materials.volume3d} & Uniform law and a staircase ball\\
 \texttt{operators.curl3d} & 3D curls and array curls, optional $1/s_w$\\
@@ -1135,7 +1140,9 @@ $\chi_{ee}$ and $\chi_{mm}$, the normal susceptibility
 $\chi_{mm}^{nn}$, and the magneto-electric pair $\chi_{em}$, $\chi_{me}$
 are in the code and are compared with the analytic reflection and
 transmission.
-\item Dipole, Gaussian beam, near-to-far, Bloch phase on the periodic wrap.
+\item Hertzian dipole, compared with the outgoing spherical wave. A
+Gaussian beam, a near-to-far integral, and a Bloch phase on the periodic
+wrap remain.
 \item Profiling, Numba, iterative FDFD, GPU. Spatially varying and spatially
 dispersive $\chi$ remain later.
 \end{enumerate}

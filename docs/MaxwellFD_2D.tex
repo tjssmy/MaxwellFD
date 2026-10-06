@@ -102,6 +102,10 @@ frequency with the third centered difference.
 PEC-backed PML and keeps a staircase ball in the permittivity. The
 incident wave is the contrast current, the unknown is the scattered
 field, and the total electric field is compared with the Mie series.
+\item A $z$-directed Hertzian dipole. One $E_z$ sample carries
+$J_z=I\ell/(\Delta x\Delta y\Delta z)$. The electric field outside the
+PML, and at least $\lambda/4$ from the element, is compared with the
+outgoing spherical wave.
 \item A resistive sheet of normal $\hat{\mathbf{y}}$. The conductance
 $1/(Z_s\Delta y)$ is added to $\sigma$ on the tangential electric samples
 of the one Ampere cell that contains the sheet. The closed-box check
@@ -124,7 +128,7 @@ at $30^\circ$ are the open run of that face.
 MaxwellFD does not import MaxwellMOM. The shared pieces are the time
 convention, the four SI constants, and the analytic targets used as
 external checks. The 3D FDFD operator stretches a PEC-backed PML and
-accepts a staircase ball. The open check is a dielectric sphere. A 3D
+accepts a staircase ball. The open checks are a dielectric sphere and a Hertzian dipole. A 3D
 leapfrog remains a later slice. Embedded PEC and PMC objects remove Yee
 samples on the 2D grid. The open PEC cylinder and the open dielectric
 cylinder are scattered-field solves on the PML.
@@ -707,6 +711,16 @@ comparison keeps the unstretched samples at least $\lambda/2$ from the
 source. The continuous field diverges at $\rho=0$, and that sample is left
 undefined.
 
+\paragraph{Hertzian dipole.}
+A $z$-directed element of moment $I\ell$ radiates the outgoing spherical
+wave for $e^{+j\omega t}$. Off the element,
+$H_\varphi=(jk I\ell/4\pi)\,(1+1/(jkr))\,e^{-jkr}\sin\theta/r$,
+$E_r=\eta I\ell\cos\theta\,(1+1/(jkr))\,e^{-jkr}/(2\pi r^2)$, and
+$E_\theta=j\eta k I\ell\sin\theta\,(1+1/(jkr)-1/(kr)^2)\,e^{-jkr}/(4\pi r)$.
+The discrete sample is $J_z=I\ell/(\Delta x\Delta y\Delta z)$ on one
+$E_z$ edge. The comparison keeps the unstretched electric samples at
+least $\lambda/4$ from the element. The continuous field diverges there.
+
 \subsection{3D cell}
 \label{sec:cell3d}
 
@@ -1192,6 +1206,54 @@ off the surface.}
 \label{fig:sphere-fields}
 \end{figure}
 
+\clearpage
+\subsection{Hertzian dipole}
+\label{sec:ex-dipole}
+
+\begin{verbatim}
+python examples/fdfd/3d/hertzian_dipole.py
+\end{verbatim}
+
+The element is $z$-directed with moment $I\ell=1$. It sits on the $E_z$
+sample nearest the center of a PEC cube, and that sample carries
+$J_z=1/(\Delta x\Delta y\Delta z)$. \texttt{--wavelength}, \texttt{--size},
+\texttt{--dx}, and \texttt{--pml} are the free-space wavelength, the cube
+side, the cell size, and the PML depth on each face. The defaults are
+$1$, $1.6$, $0.1$, and $3$. The comparison is every free electric sample
+outside the PML and at least $0.25\lambda$ from the element.
+
+The default run writes
+\begin{center}
+\path{hertzian_dipole_lam1_size1.6_dx0.1_pml3/}
+\end{center}
+with \texttt{domain.png} and \texttt{hertzian\_dipole.png}. The cube is
+$16$ cells on a side. Three PML cells back every face. The figure shows
+$\mathrm{Re}\,E_z$ on the $xz$ plane through the element. On this grid
+the annotated $L^2$ is $9.65\%$. The regression uses the same grid and
+the bar $0.16$.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.72\textwidth]{../examples/fdfd/3d/hertzian_dipole_lam1_size1.6_dx0.1_pml3/domain.png}
+\caption{Default Hertzian-dipole domain. The orange frame is the PML
+band used by the solve. The blue segment is the $z$-directed element.
+The dashed circle is the $0.25\lambda$ radius inside which the field
+comparison is omitted.}
+\label{fig:dipole-domain}
+\end{figure}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{../examples/fdfd/3d/hertzian_dipole_lam1_size1.6_dx0.1_pml3/hertzian_dipole.png}
+\caption{Hertzian dipole of moment $I\ell=1$ at $\lambda=1$, on a cube
+of side $1.6$ at $\Delta=0.1$, with three PML cells on each face. The
+panels are $\mathrm{Re}\,E_z$ on the $xz$ plane through the element.
+The annotated $L^2$ is the electric-sample error outside the PML and at
+least $0.25\lambda$ from the element.}
+\label{fig:dipole-fields}
+\end{figure}
+
+\clearpage
 \subsection{Resistive sheet}
 \label{sec:ex-sheet}
 
@@ -1600,7 +1662,7 @@ side and the shadow over the central $6\lambda$ of the sheet.}
 \section{Tests and later slices}
 \label{sec:tests}
 
-The suite is \texttt{pytest} from the project root, eighty-one tests in
+The suite is \texttt{pytest} from the project root, eighty-four tests in
 \texttt{tests/}. Milestone~1 checks the curls, the adjoint, the cavity
 eigenvalues, the manufactured solve, the invariant and the CFL growth, and
 the fully discrete dispersion, with relative or absolute bars from
@@ -1630,7 +1692,10 @@ the electric vector to the same bar. The stretched 3D curls match the
 array form to $10^{-12}$ on that box. The 3D Mie series is continuous
 across the sphere surface to $10^{-8}$. The open dielectric sphere, at
 $n=1.5$ on an $18^3$ box with a PML of $3$ cells, stays under
-$1.8\times 10^{-2}$. The resistive sheet, at $Z_s=\eta_0$ on an
+$1.8\times 10^{-2}$. The Hertzian dipole, with $I\ell=1$ on a $16^3$
+box at $\Delta=0.1$, $\lambda=1$, and a PML of $3$ cells, stays under
+$0.16$ outside the band and at least $0.25\lambda$ from the element.
+The resistive sheet, at $Z_s=\eta_0$ on an
 $8\times 80$ box with $\Delta=1$, $\lambda=46$, and the sheet on the
 electric node $y=40$, stays under $6\times 10^{-4}$ (TMz, $E_z$) and
 $1.2\times 10^{-2}$ (TEz, $E_x$ and $E_y$). The symmetric sheet, on that
@@ -1671,7 +1736,8 @@ and dielectric-cylinder domain figures still draw an orange thickness as
 a layout. Those two solves use the Dirichlet trace. The open PEC cylinder
 of Sec.~\ref{sec:ex-pec}, the open dielectric cylinder of
 Sec.~\ref{sec:ex-diel}, the open dielectric sphere of
-Sec.~\ref{sec:ex-sphere}, the finite absorbing sheet of
+Sec.~\ref{sec:ex-sphere}, the Hertzian dipole of
+Sec.~\ref{sec:ex-dipole}, the finite absorbing sheet of
 Sec.~\ref{sec:ex-finite}, the finite oblique sheet of
 Sec.~\ref{sec:ex-finite-oblique}, and the finite magneto-electric sheet of
 Sec.~\ref{sec:ex-finite-cross} are the solves that stretch the derivatives.

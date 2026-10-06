@@ -17,6 +17,8 @@ refuses an active PML.
 A non-magnetic open dielectric keeps every sample. The caller passes the
 contrast current ``J = j ω (ε − ε0) E_inc`` and the unknown is the
 scattered field. The diagonal still holds the full staircase permittivity.
+A Hertzian dipole is an impressed current on one electric sample. The
+``z``-directed element uses ``J_z = Iℓ / (Δx Δy Δz)``.
 """
 
 from __future__ import annotations
