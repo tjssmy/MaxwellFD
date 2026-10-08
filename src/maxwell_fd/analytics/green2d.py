@@ -6,8 +6,12 @@ z-directed current whose integral is ``current`` amperes produces
     (∇² + k²) E_z = j ω μ J_z,
     E_z = -(ω μ current / 4) H_0^{(2)}(k ρ),
 
-with ``k = ω √(μ ε)`` and ``ρ`` the distance from the source. On the Yee
-grid that current is the sample ``J_z = current / (Δx Δy)``.
+with ``k = ω √(μ ε)`` and ``ρ`` the distance from the source. The
+magnetic field is azimuthal,
+
+    H_φ = -j (k I / 4) H_1^{(2)}(k ρ).
+
+On the Yee grid that current is the sample ``J_z = current / (Δx Δy)``.
 """
 
 from __future__ import annotations
@@ -46,3 +50,34 @@ def line_current_ez(
     k = float(omega) * float(np.sqrt(mu * eps))
     field[mask] = -0.25 * float(omega) * mu * current * hankel2(0, k * rho[mask])
     return field
+
+
+def line_current_h(
+    x: NDArray[np.float64],
+    y: NDArray[np.float64],
+    *,
+    omega: float,
+    current: float = 1.0,
+    mu: float = MU0,
+    eps: float = EPS0,
+) -> tuple[ComplexArray, ComplexArray]:
+    """``H_x`` and ``H_y`` of a line current at the origin of ``(x, y)``.
+
+    ``H_φ = -j (k I / 4) H_1^{(2)}(k ρ)``, with ``φ`` from ``+x``. The
+    sample at ``ρ = 0`` is left as NaN.
+    """
+    if omega == 0.0:
+        raise ValueError("omega must be nonzero")
+    if mu <= 0.0 or eps <= 0.0:
+        raise ValueError("mu and eps must be positive")
+    xx = np.asarray(x, dtype=np.float64)
+    yy = np.asarray(y, dtype=np.float64)
+    rho = np.hypot(xx, yy)
+    hx = np.full(rho.shape, np.nan, dtype=np.complex128)
+    hy = np.full(rho.shape, np.nan, dtype=np.complex128)
+    mask = rho > 0.0
+    k = float(omega) * float(np.sqrt(mu * eps))
+    azimuth = -1j * (k * current / 4.0) * hankel2(1, k * rho[mask])
+    hx[mask] = -azimuth * (yy[mask] / rho[mask])
+    hy[mask] = azimuth * (xx[mask] / rho[mask])
+    return hx, hy

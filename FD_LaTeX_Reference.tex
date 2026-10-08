@@ -68,7 +68,16 @@ $J_z=I\ell/(\Delta x\Delta y\Delta z)$, and the 3D solve compares the
 electric field with the outgoing spherical wave. A 2D paraxial Gaussian
 beam places its impressed current on the two $E_z$ rows that touch a
 horizontal split. Below the split the unknown is the scattered field, and
-the total field above the split is compared with the beam. Milestone~1
+the total field above the split is compared with the beam. A 2D TMz
+near-to-far integral reads $E_z$ and the tangential $H$ on a closed
+contour in the unstretched region. With $\mathbf{n}$ the outward normal
+and $K_z=(\mathbf{n}\times\mathbf{H})_z$, the far-zone field is the
+leading $H_0^{(2)}$ factor times the integral of
+$e^{jk\hat{\boldsymbol{\rho}}\cdot\mathbf{r}'}
+\bigl[j\omega\mu K_z-jk(\mathbf{n}\cdot\hat{\boldsymbol{\rho}})E_z\bigr]$.
+A line current at the origin returns $-(\omega\mu I/4)$ times that
+factor. On a Yee rectangle, $E_z$ is the node value and the tangential
+$H$ is the average of the two faces that touch the edge. Milestone~1
 does not inject those sources. Its free-space check is a periodic
 eigenmode, and its cavity check is a source-free resonance.
 
@@ -826,7 +835,7 @@ in the table above the 3D curls. Later slices add comparisons that this
 note already fixes the formulas for, and that the code does not yet run:
 
 \begin{itemize}
-\item a near-to-far integral and a Bloch cell.
+\item a Bloch cell.
 \end{itemize}
 
 Prescribed external maps are checked by confirming that the samples the
@@ -1056,8 +1065,9 @@ Module & Responsibility\\
 \texttt{analytics.dispersion} & Frequency~\eqref{eq:discrete} and the three-sample recurrence\\
 \texttt{analytics.fresnel} & Slab fields~\eqref{eq:fresnel-field}, \eqref{eq:fresnel-te}\\
 \texttt{analytics.mie2d} & Cylinder series~\eqref{eq:mie-tm}, \eqref{eq:mie-te}\\
-\texttt{analytics.green2d} & Outgoing line current, $H_0^{(2)}$\\
+\texttt{analytics.green2d} & Outgoing line current, $H_0^{(2)}$ and $H_1^{(2)}$\\
 \texttt{analytics.beam2d} & 2D paraxial Gaussian beam\\
+\texttt{analytics.farfield2d} & 2D TMz near-to-far integral\\
 \texttt{analytics.dipole3d} & Hertzian dipole, outgoing spherical wave\\
 \texttt{grid.yee3d} & 3D counts, spacings, boundary, shapes, coordinates\\
 \texttt{materials.volume3d} & Uniform law and a staircase ball\\
@@ -1142,9 +1152,10 @@ $\chi_{ee}$ and $\chi_{mm}$, the normal susceptibility
 $\chi_{mm}^{nn}$, and the magneto-electric pair $\chi_{em}$, $\chi_{me}$
 are in the code and are compared with the analytic reflection and
 transmission.
-\item Hertzian dipole, compared with the outgoing spherical wave, and a
-2D paraxial Gaussian beam on a total-field/scattered-field split. A
-near-to-far integral and a Bloch phase on the periodic wrap remain.
+\item Hertzian dipole, compared with the outgoing spherical wave, a
+2D paraxial Gaussian beam on a total-field/scattered-field split, and a
+2D TMz near-to-far integral compared with the leading Hankel wave of a
+line current. A Bloch phase on the periodic wrap remains.
 \item Profiling, Numba, iterative FDFD, GPU. Spatially varying and spatially
 dispersive $\chi$ remain later.
 \end{enumerate}

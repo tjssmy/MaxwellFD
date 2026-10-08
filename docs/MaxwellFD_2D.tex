@@ -111,6 +111,10 @@ $E_z$ rows beside a horizontal split launches the beam into the
 total-field side. That electric field, outside the PML and at least
 $\lambda/2$ from the split, is compared with the beam. The
 scattered-field side stays quiet.
+\item A 2D TMz near-to-far integral. A closed contour in the unstretched
+interior carries $E_z$ on the nodes and the averaged tangential $H$.
+The far field of a line current is compared with the leading Hankel
+wave.
 \item A resistive sheet of normal $\hat{\mathbf{y}}$. The conductance
 $1/(Z_s\Delta y)$ is added to $\sigma$ on the tangential electric samples
 of the one Ampere cell that contains the sheet. The closed-box check
@@ -133,7 +137,7 @@ at $30^\circ$ are the open run of that face.
 MaxwellFD does not import MaxwellMOM. The shared pieces are the time
 convention, the four SI constants, and the analytic targets used as
 external checks. The 3D FDFD operator stretches a PEC-backed PML and
-accepts a staircase ball. The open checks are a dielectric sphere, a Hertzian dipole, and a Gaussian beam. A 3D
+accepts a staircase ball. The open checks are a dielectric sphere, a Hertzian dipole, a Gaussian beam, and the far field of a line current. A 3D
 leapfrog remains a later slice. Embedded PEC and PMC objects remove Yee
 samples on the 2D grid. The open PEC cylinder and the open dielectric
 cylinder are scattered-field solves on the PML.
@@ -711,7 +715,9 @@ $(\nabla^2+k^2)E_z=j\omega\mu J_z$ in a uniform medium. For $e^{+j\omega t}$
 the outgoing field is
 $E_z=-(\omega\mu I/4)\,H_0^{(2)}(k\rho)$, with
 $k=\omega\sqrt{\mu\varepsilon}$ taken from the same $\mu$ and $\varepsilon$
-the solver uses. The discrete sample is $J_z=I/(\Delta x\Delta y)$. The
+the solver uses. The azimuthal field is
+$H_\varphi=-j(k I/4)\,H_1^{(2)}(k\rho)$.
+The discrete sample is $J_z=I/(\Delta x\Delta y)$. The
 comparison keeps the unstretched samples at least $\lambda/2$ from the
 source. The continuous field diverges at $\rho=0$, and that sample is left
 undefined.
@@ -735,6 +741,24 @@ magnetic field is $H_x=E_z/\eta$. The discrete source is the impressed
 current on the two $E_z$ rows that touch a horizontal split. Rows below
 the split hold the scattered field. The comparison keeps unstretched
 total-field samples at least $\lambda/2$ from the split.
+
+\paragraph{Near-to-far field.}
+A closed contour in the unstretched region carries $E_z$ and the
+tangential magnetic field. With $\mathbf{n}$ the outward unit normal
+and $K_z=(\mathbf{n}\times\mathbf{H})_z$, the far-zone field at distance
+$\rho$ and angle $\varphi$ from $+\hat{\mathbf{x}}$ is the leading
+Hankel factor
+$(j/4)\sqrt{2/(\pi k\rho)}\,e^{-j(k\rho-\pi/4)}$ times the contour
+integral of
+$e^{jk\hat{\boldsymbol{\rho}}\cdot\mathbf{r}'}\bigl[j\omega\mu K_z
+- jk(\mathbf{n}\cdot\hat{\boldsymbol{\rho}})E_z\bigr]$.
+On a Yee rectangle the electric field is the node value and the
+tangential $H$ is the average of the two faces that touch the node
+line. The magnetic field on that contour comes from the unstretched
+curl, $H=-(\nabla\times E)/(j\omega\mu)$, so the rectangle stays off
+the PML. The same Hankel factor, with amplitude $-(\omega\mu I/4)$, is
+the far field of a line current at the origin. The comparison uses that
+wave.
 
 \subsection{3D cell}
 \label{sec:cell3d}
@@ -803,7 +827,9 @@ Module & Role\\
 \texttt{analytics.mie2d}
 & Cylinder coefficients and $E_z$, $H_z$, $E_x$, $E_y$\\
 \texttt{analytics.green2d}
-& Outgoing line-current $E_z$\\
+& Outgoing line-current $E_z$ and $H_\varphi$\\
+\texttt{analytics.farfield2d}
+& 2D TMz near-to-far integral\\
 \texttt{grid.yee3d}
 & \texttt{YeeGrid3D}: six components, PEC and periodic shapes\\
 \texttt{materials.volume3d}
@@ -1318,6 +1344,57 @@ outside the PML and at least $0.5\lambda$ from the split.}
 \end{figure}
 
 \clearpage
+\subsection{Line-current far field}
+\label{sec:ex-far}
+
+\begin{verbatim}
+python examples/fdfd/2d/farfield_line.py
+\end{verbatim}
+
+A unit line current sits on the center $E_z$ sample of a PEC square,
+$J_z=1/(\Delta x\Delta y)$. A convolutional PML backs every wall. The
+contour is a square of half-width \texttt{--half}, centered on that
+sample, and it stays in the unstretched interior. $E_z$ is read on the
+nodes. Tangential $H$ on each edge is the average of the two faces that
+touch the edge. The pattern at $20$ wavelengths is compared with the
+leading Hankel wave of that current. \texttt{--wavelength},
+\texttt{--side}, \texttt{--dx}, \texttt{--pml}, and \texttt{--half} are
+the free-space wavelength, the square, the cell size, the PML depth, and
+the contour half-width. The defaults are $1$, $3$, $0.05$, $8$, and
+$0.8$.
+
+The default run writes
+\begin{center}
+\path{farfield_line_lam1_side3_dx0.05_pml8_half0.8/}
+\end{center}
+with \texttt{domain.png} and \texttt{farfield\_line.png}. The square is
+$60$ cells on a side. Eight PML cells back every face. The pattern figure
+shows $|E_z|$ and the phase at $72$ angles. On this grid the annotated
+$L^2$ is $2.62\%$. The regression uses the same grid and the bar $0.05$.
+Halving the spacing, with the PML deepened to $16$ cells on the same
+physical band, stays under $0.02$ and drops the error by more than half.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.72\textwidth]{../examples/fdfd/2d/farfield_line_lam1_side3_dx0.05_pml8_half0.8/domain.png}
+\caption{Default line-current far-field domain. The orange frame is the
+PML band used by the solve. The dashed square is the near-to-far contour.
+The blue dot is the line current.}
+\label{fig:far-domain}
+\end{figure}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{../examples/fdfd/2d/farfield_line_lam1_side3_dx0.05_pml8_half0.8/farfield_line.png}
+\caption{Line-current far field at $\lambda=1$, on a square of side $3$
+at $\Delta=0.05$, with eight PML cells on each face and a contour of
+half-width $0.8$. The panels are $|E_z|$ and the phase at
+$\rho=20\lambda$. The annotated $L^2$ is the complex error against the
+leading Hankel wave.}
+\label{fig:far-fields}
+\end{figure}
+
+\clearpage
 \subsection{Resistive sheet}
 \label{sec:ex-sheet}
 
@@ -1726,7 +1803,7 @@ side and the shadow over the central $6\lambda$ of the sheet.}
 \section{Tests and later slices}
 \label{sec:tests}
 
-The suite is \texttt{pytest} from the project root, eighty-seven tests in
+The suite is \texttt{pytest} from the project root, ninety tests in
 \texttt{tests/}. Milestone~1 checks the curls, the adjoint, the cavity
 eigenvalues, the manufactured solve, the invariant and the CFL growth, and
 the fully discrete dispersion, with relative or absolute bars from
@@ -1764,6 +1841,11 @@ $\lambda=1$, and a PML of $8$ cells, stays under $0.10$ on the total-field
 side, outside the band and at least $0.5\lambda$ from the split at
 $y=1.5$. The scattered-field side of that window stays under
 $2\times 10^{-3}$.
+The line-current far field, on a $3\lambda$ square at $\Delta=0.05$,
+$\lambda=1$, a PML of $8$ cells, and a contour of half-width $0.8\lambda$,
+stays under $0.05$ at $\rho=20\lambda$. The same physical contour at
+$\Delta=0.025$, with a PML of $16$ cells, stays under $0.02$ and drops
+the error by more than half.
 The resistive sheet, at $Z_s=\eta_0$ on an
 $8\times 80$ box with $\Delta=1$, $\lambda=46$, and the sheet on the
 electric node $y=40$, stays under $6\times 10^{-4}$ (TMz, $E_z$) and
@@ -1798,16 +1880,16 @@ cells per wavelength. The $10\lambda$ sheet with those susceptibilities
 at $30^\circ$ is the open example in Sec.~\ref{sec:ex-finite-cross}. A failing
 bar is a reason to refine the grid in that test, not to widen the bar.
 
-The formulation note already fixes the formulas for the slices that remain
-to be coded: a near-to-far
-integral and a Bloch phase. The Fresnel
+The formulation note already fixes the formulas for the slice that remains
+to be coded: a Bloch phase. The Fresnel
 and dielectric-cylinder domain figures still draw an orange thickness as
 a layout. Those two solves use the Dirichlet trace. The open PEC cylinder
 of Sec.~\ref{sec:ex-pec}, the open dielectric cylinder of
 Sec.~\ref{sec:ex-diel}, the open dielectric sphere of
 Sec.~\ref{sec:ex-sphere}, the Hertzian dipole of
 Sec.~\ref{sec:ex-dipole}, the Gaussian beam of
-Sec.~\ref{sec:ex-beam}, the finite absorbing sheet of
+Sec.~\ref{sec:ex-beam}, the line-current far field of
+Sec.~\ref{sec:ex-far}, the finite absorbing sheet of
 Sec.~\ref{sec:ex-finite}, the finite oblique sheet of
 Sec.~\ref{sec:ex-finite-oblique}, and the finite magneto-electric sheet of
 Sec.~\ref{sec:ex-finite-cross} are the solves that stretch the derivatives.
