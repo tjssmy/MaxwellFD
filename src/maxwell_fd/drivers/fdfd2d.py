@@ -42,6 +42,12 @@ polarizations.
 The sheet is not combined with an embedded conductor, and the spatial
 eigenproblem refuses it. Passing ``incident`` makes the unknown the
 scattered field: the continuous incident wave enters through the sheet rows.
+
+A horizontal total-field/scattered-field split is an impressed current,
+not a new unknown. ``tfsf_y_current`` evaluates that current on the two
+``Ez`` rows that touch the split. The scattered-field side of the incident
+wave is set to zero before the residual is formed, so the solve carries
+the incident wave on the total-field side.
 """
 
 from __future__ import annotations
@@ -401,6 +407,48 @@ def _sample_diagonals(
     if complex_eps:
         eps_e = np.asarray(eps_e, dtype=np.complex128)
     return eps_e, sigma_e, mu_h, complex_eps
+
+
+def tfsf_y_current(
+    operator: FDFDOperator, omega: float, ez: NDArray, j_total: int
+) -> ComplexArray:
+    """Impressed ``J_z`` that launches ``ez`` across one horizontal split.
+
+    ``j_total`` is the first total-field ``Ez`` row. Rows below it are the
+    scattered-field side. The current is ``-A`` applied to the incident
+    field with that side set to zero, kept only on the two rows the split
+    touches. ``A e = -J`` then holds the incident wave on the total-field
+    side. TMz only, and not together with a GSTC sheet.
+    """
+    grid = operator.grid
+    if grid.polarization is not Polarization.TMZ:
+        raise ValueError("TF/SF split is TMz")
+    if operator.sheet is not None:
+        raise ValueError("TF/SF split is not combined with a sheet")
+    if grid.periodic_axes()[1]:
+        raise ValueError("TF/SF split needs a PEC wall in y")
+    if isinstance(j_total, bool) or not isinstance(j_total, (int, np.integer)):
+        raise ValueError(f"j_total must be an Ez row, got {j_total}")
+    row = int(j_total)
+    if row < 2 or row > grid.ny - 1:
+        raise ValueError(
+            f"j_total must leave a scattered row and a total-field row, got {row}"
+        )
+    incident = np.asarray(ez)
+    shape = grid.shapes()["ez"]
+    if incident.shape != shape:
+        raise ValueError(f"ez shape {incident.shape} != {shape}")
+    masked = np.array(incident, dtype=np.complex128, copy=True)
+    masked[:, :row] = 0.0
+    packed = operator.layout.pack_e({"ez": masked})
+    residual = operator.system_matrix(omega) @ packed
+    dof = operator.layout.e[0]
+    keep = (dof.j == row) | (dof.j == row - 1)
+    if not np.any(keep):
+        raise ValueError("TF/SF split has no electric samples")
+    current = np.zeros_like(residual)
+    current[keep] = -residual[keep]
+    return current
 
 
 def _match(field: NDArray, shape: tuple[int, int], name: str) -> None:

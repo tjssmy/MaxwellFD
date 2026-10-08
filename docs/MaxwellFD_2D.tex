@@ -106,6 +106,11 @@ field, and the total electric field is compared with the Mie series.
 $J_z=I\ell/(\Delta x\Delta y\Delta z)$. The electric field outside the
 PML, and at least $\lambda/4$ from the element, is compared with the
 outgoing spherical wave.
+\item A 2D paraxial Gaussian beam. The impressed current on the two
+$E_z$ rows beside a horizontal split launches the beam into the
+total-field side. That electric field, outside the PML and at least
+$\lambda/2$ from the split, is compared with the beam. The
+scattered-field side stays quiet.
 \item A resistive sheet of normal $\hat{\mathbf{y}}$. The conductance
 $1/(Z_s\Delta y)$ is added to $\sigma$ on the tangential electric samples
 of the one Ampere cell that contains the sheet. The closed-box check
@@ -128,7 +133,7 @@ at $30^\circ$ are the open run of that face.
 MaxwellFD does not import MaxwellMOM. The shared pieces are the time
 convention, the four SI constants, and the analytic targets used as
 external checks. The 3D FDFD operator stretches a PEC-backed PML and
-accepts a staircase ball. The open checks are a dielectric sphere and a Hertzian dipole. A 3D
+accepts a staircase ball. The open checks are a dielectric sphere, a Hertzian dipole, and a Gaussian beam. A 3D
 leapfrog remains a later slice. Embedded PEC and PMC objects remove Yee
 samples on the 2D grid. The open PEC cylinder and the open dielectric
 cylinder are scattered-field solves on the PML.
@@ -721,6 +726,16 @@ The discrete sample is $J_z=I\ell/(\Delta x\Delta y\Delta z)$ on one
 $E_z$ edge. The comparison keeps the unstretched electric samples at
 least $\lambda/4$ from the element. The continuous field diverges there.
 
+\paragraph{Gaussian beam.}
+A 2D paraxial beam of waist radius $w_0$ and amplitude $A$ propagates in
+$+\hat{\mathbf{y}}$ for $e^{+j\omega t}$. With $z_R=kw_0^2/2$ and
+$q=z+jz_R$,
+$E_z=A\sqrt{j z_R/q}\,e^{-jkz-jkx^2/(2q)}$, and the local plane-wave
+magnetic field is $H_x=E_z/\eta$. The discrete source is the impressed
+current on the two $E_z$ rows that touch a horizontal split. Rows below
+the split hold the scattered field. The comparison keeps unstretched
+total-field samples at least $\lambda/2$ from the split.
+
 \subsection{3D cell}
 \label{sec:cell3d}
 
@@ -1254,6 +1269,55 @@ least $0.25\lambda$ from the element.}
 \end{figure}
 
 \clearpage
+\subsection{Gaussian beam}
+\label{sec:ex-beam}
+
+\begin{verbatim}
+python examples/fdfd/2d/gaussian_beam.py
+\end{verbatim}
+
+The beam propagates in $+\hat{\mathbf{y}}$ with waist radius $w_0=1.5$
+and amplitude $1$. The waist is the center of a PEC rectangle.
+\texttt{--wavelength}, \texttt{--width}, \texttt{--height},
+\texttt{--dx}, \texttt{--pml}, \texttt{--w0}, and \texttt{--split} are
+the free-space wavelength, the two sides, the cell size, the PML depth,
+the waist radius, and the first total-field $E_z$ row. The defaults are
+$1$, $8$, $6$, $0.05$, $8$, $1.5$, and $1.5$. The impressed current sits
+on the two $E_z$ rows that touch that split. Below the split the unknown
+is the scattered field.
+
+The default run writes
+\begin{center}
+\path{gaussian_beam_lam1_waist1.5_width8_height6_dx0.05_pml8_split1.5/}
+\end{center}
+with \texttt{domain.png} and \texttt{gaussian\_beam.png}. The box is
+$160\times 120$ cells. Eight PML cells back every face. The figure shows
+$\mathrm{Re}\,E_z$. On this grid the annotated $L^2$, outside the PML and
+at least $0.5\lambda$ from the split, is $5.57\%$. The regression uses the
+same grid and the bar $0.10$. The scattered-field side of that comparison
+stays under $2\times 10^{-3}$.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.86\textwidth]{../examples/fdfd/2d/gaussian_beam_lam1_waist1.5_width8_height6_dx0.05_pml8_split1.5/domain.png}
+\caption{Default Gaussian-beam domain. The orange frame is the PML band
+used by the solve. The dashed line is the total-field/scattered-field
+split. The solid segment is the $1/e$ waist.}
+\label{fig:beam-domain}
+\end{figure}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{../examples/fdfd/2d/gaussian_beam_lam1_waist1.5_width8_height6_dx0.05_pml8_split1.5/gaussian_beam.png}
+\caption{Gaussian beam of waist radius $w_0=1.5$ at $\lambda=1$, on an
+$8\times 6$ box at $\Delta=0.05$, with eight PML cells on each face. The
+panels are $\mathrm{Re}\,E_z$. The dashed line is the split. The
+annotated $L^2$ is the electric-sample error on the total-field side,
+outside the PML and at least $0.5\lambda$ from the split.}
+\label{fig:beam-fields}
+\end{figure}
+
+\clearpage
 \subsection{Resistive sheet}
 \label{sec:ex-sheet}
 
@@ -1662,7 +1726,7 @@ side and the shadow over the central $6\lambda$ of the sheet.}
 \section{Tests and later slices}
 \label{sec:tests}
 
-The suite is \texttt{pytest} from the project root, eighty-four tests in
+The suite is \texttt{pytest} from the project root, eighty-seven tests in
 \texttt{tests/}. Milestone~1 checks the curls, the adjoint, the cavity
 eigenvalues, the manufactured solve, the invariant and the CFL growth, and
 the fully discrete dispersion, with relative or absolute bars from
@@ -1695,6 +1759,11 @@ $n=1.5$ on an $18^3$ box with a PML of $3$ cells, stays under
 $1.8\times 10^{-2}$. The Hertzian dipole, with $I\ell=1$ on a $16^3$
 box at $\Delta=0.1$, $\lambda=1$, and a PML of $3$ cells, stays under
 $0.16$ outside the band and at least $0.25\lambda$ from the element.
+The Gaussian beam, with $w_0=1.5$ on an $8\times 6$ box at $\Delta=0.05$,
+$\lambda=1$, and a PML of $8$ cells, stays under $0.10$ on the total-field
+side, outside the band and at least $0.5\lambda$ from the split at
+$y=1.5$. The scattered-field side of that window stays under
+$2\times 10^{-3}$.
 The resistive sheet, at $Z_s=\eta_0$ on an
 $8\times 80$ box with $\Delta=1$, $\lambda=46$, and the sheet on the
 electric node $y=40$, stays under $6\times 10^{-4}$ (TMz, $E_z$) and
@@ -1730,14 +1799,15 @@ at $30^\circ$ is the open example in Sec.~\ref{sec:ex-finite-cross}. A failing
 bar is a reason to refine the grid in that test, not to widen the bar.
 
 The formulation note already fixes the formulas for the slices that remain
-to be coded: impressed beams, a near-to-far
-integral, and a Bloch phase. The Fresnel
+to be coded: a near-to-far
+integral and a Bloch phase. The Fresnel
 and dielectric-cylinder domain figures still draw an orange thickness as
 a layout. Those two solves use the Dirichlet trace. The open PEC cylinder
 of Sec.~\ref{sec:ex-pec}, the open dielectric cylinder of
 Sec.~\ref{sec:ex-diel}, the open dielectric sphere of
 Sec.~\ref{sec:ex-sphere}, the Hertzian dipole of
-Sec.~\ref{sec:ex-dipole}, the finite absorbing sheet of
+Sec.~\ref{sec:ex-dipole}, the Gaussian beam of
+Sec.~\ref{sec:ex-beam}, the finite absorbing sheet of
 Sec.~\ref{sec:ex-finite}, the finite oblique sheet of
 Sec.~\ref{sec:ex-finite-oblique}, and the finite magneto-electric sheet of
 Sec.~\ref{sec:ex-finite-cross} are the solves that stretch the derivatives.
