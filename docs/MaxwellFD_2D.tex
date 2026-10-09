@@ -60,7 +60,8 @@ $\chi_{ee}=\chi_{mm}=-2j/k$, is a normal-incidence absorber on a four-sided PML.
 The normal magnetic susceptibility $\chi_{mm}^{nn}$ enters the TMz jump, and
 one periodic cell at an angle is compared with the analytic reflection and
 transmission. The same susceptibilities on a $10\lambda$ sheet at $30^\circ$
-are the open scattered-field run.
+are the open scattered-field run. A piecewise sheet gives each magnetic
+sample the susceptibilities of the piece that contains its $x$.
 \end{abstract}
 
 \tableofcontents
@@ -138,6 +139,13 @@ $\partial_x H_y$ to the TMz jump. $H_y$ is not split. A periodic cell one
 transverse period wide, with the analytic trace on the $y$ ends, checks
 that term at $30^\circ$. The same susceptibilities on a $10\lambda$ sheet
 at $30^\circ$ are the open run of that face.
+\item A piecewise GSTC sheet. Each magnetic sample takes the five
+susceptibilities of the piece that contains its $x$. The jumps stay
+the same. A $6\lambda$ sheet split into $3\lambda+3\lambda$ compares
+each piece with that piece's analytic field, one wavelength inside
+the ends and the junction. The left piece is the normal-incidence
+absorber and the right piece is $\chi_{ee}=0.5$, $\chi_{mm}=0.25$.
+The $10\lambda$ run of that sheet is the open example.
 \end{enumerate}
 
 MaxwellFD does not import MaxwellMOM. The shared pieces are the time
@@ -212,7 +220,9 @@ stencil, so a cut inside the PML is refused. $\chi_{mm}^{nn}$ adds
 $\chi_{mm}^{nn}\partial_x H_{y,\mathrm{av}}$ on the TMz side of that jump
 and leaves TEz unchanged. On a periodic $x$ face the wrapped neighbors
 of that derivative, and the wrapped TEz link at the right edge, carry
-the same Bloch factor. The
+the same Bloch factor. A piecewise sheet assigns each magnetic sample
+the five susceptibilities of the piece that contains its $x$. The jumps
+stay the same, and a sample outside every piece stays in the bulk curl. The
 resistive conductance is a separate update. An embedded PMC is a mask on magnetic samples inside
 the grid. The outer wall is still \texttt{Boundary.PEC},
 \texttt{Boundary.PERIODIC}, or \texttt{Boundary.PERIODIC\_X}.
@@ -860,7 +870,7 @@ Module & Role\\
 \texttt{analytics.mie3d}
 & Sphere fields with the outgoing wave $h_n^{(2)}$\\
 \texttt{materials.sheets}
-& \texttt{ResistiveSheet} on one Ampere cell, and \texttt{SymmetricSheet} with $\chi_{mm}^{nn}$\\
+& \texttt{ResistiveSheet} on one Ampere cell, and \texttt{SymmetricSheet} with piecewise $\chi(x)$\\
 \texttt{analytics.sheets}
 & Sheet $R$, $T$, and the uniform and oblique fields\\
 \bottomrule
@@ -899,7 +909,9 @@ $\partial_x H_y$ on the TMz jump. The TEz rows stay the tangential pair.
 A finite run passes the
 ends of the half-open interval. An incident wave passed to \texttt{solve}
 makes the unknown the scattered field. The sheet may share a PML box when
-every cut sample is unstretched.
+every cut sample is unstretched. A piecewise sheet passes one interval
+on each piece, and each cut sample uses the susceptibilities of the piece
+that contains its $x$.
 
 The real eigenproblem is \texttt{spatial\_operator}. It returns the pair
 $(K,M)$ of the unstretched curl and refuses an active PML. TEz results
@@ -923,6 +935,7 @@ python examples/fdfd/2d/dielectric_cylinder_open.py
 python examples/fdfd/2d/resistive_sheet.py
 python examples/fdfd/2d/symmetric_sheet.py
 python examples/fdfd/2d/finite_sheet.py
+python examples/fdfd/2d/piecewise_sheet.py
 python examples/fdfd/2d/periodic_sheet.py
 python examples/fdfd/3d/cavity.py
 python examples/fdfd/3d/dielectric_sphere.py
@@ -947,8 +960,8 @@ inner edge together. The 3D cavity figure is one panel per pure mode.
 The open sphere is one row of $\mathrm{Re}\,E_x$ on the $xz$ plane
 through the center: FD, Mie, and FD$-$Mie. The resistive sheet and the symmetric sheet use the columns FD, Sheet,
 and FD$-$Sheet, with $\mathrm{Re}\,E_z$ and $\mathrm{Re}\,E_x$. The periodic
-oblique sheet uses FD, Analytic, and FD$-$Analytic. The finite sheet uses
-Incident, Scattered, and Total.
+oblique sheet uses FD, Analytic, and FD$-$Analytic. The finite sheet and
+the piecewise sheet use Incident, Scattered, and Total.
 
 \subsection{Fresnel slab}
 \label{sec:ex-fresnel}
@@ -1885,10 +1898,68 @@ side and the shadow over the central $6\lambda$ of the sheet.}
 \end{figure}
 
 \clearpage
+\subsection{Two-piece sheet}
+\label{sec:ex-piecewise}
+
+\begin{verbatim}
+python examples/fdfd/2d/piecewise_sheet.py
+\end{verbatim}
+
+The sheet is $10\lambda$ long at $20$ cells per wavelength, with $12$ PML
+cells on each side and two wavelengths of vacuum between the sheet and
+the band. \texttt{--split} is the left piece, $5\lambda$ by default.
+That piece is the absorber $\chi_{ee}=\chi_{mm}=-2j/k$. The right piece
+is $\chi_{ee}=0.5$, $\chi_{mm}=0.25$. The incidence is normal, so a
+uniform sheet of either piece has the same coefficients in both
+polarizations. The absorber has $R=T=0$. The right-hand pair has
+$|R|=0.33$ and $|T|=0.94$. The unknown is the scattered field. Each
+piece is compared with the uniform sheet of its own susceptibilities,
+on a window one wavelength inside the ends and the junction. The
+absorber shadow is a mean $|E|$, because that transmission is zero.
+The other three windows are a relative $L^2$.
+
+The run writes
+\begin{center}
+\path{piecewise_sheet_lam1_points20_theta0_pml12_sheet10_split5/}
+\end{center}
+with \texttt{domain.png} and \texttt{piecewise\_sheet.png}. The field
+figure shows $\mathrm{Re}\,E_z$ (TMz) and $\mathrm{Re}\,E_x$ (TEz).
+The columns are the incident wave, the scattered field, and the total
+field. On this grid the annotated windows are a left lit $L^2$ of
+$0.09$ and a left shadow $|E|$ of $0.09$, then a right lit $L^2$ of
+$0.08$ and a right shadow $L^2$ of $0.20$ (TMz), and $0.08$, $0.04$,
+$0.07$, and $0.20$ (TEz). The shadow of the absorber is dark. The
+right-hand piece carries the transmitted wave, and the junction and
+the ends diffract.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{../examples/fdfd/2d/piecewise_sheet_lam1_points20_theta0_pml12_sheet10_split5/domain.png}
+\caption{Two-piece domain. The blue segment is the absorbing half and
+the green segment is $\chi_{ee}=0.5$, $\chi_{mm}=0.25$. The orange
+frame is the PML band on all four sides. The sheet is $10\lambda$ long
+and the split is at $5\lambda$.}
+\label{fig:piecewise-domain}
+\end{figure}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{../examples/fdfd/2d/piecewise_sheet_lam1_points20_theta0_pml12_sheet10_split5/piecewise_sheet.png}
+\caption{Two-piece sheet, $\lambda=1$, length $10\lambda$, split
+$5\lambda$, $\theta=0^\circ$, at $20$ cells per wavelength with $12$
+PML cells on each side. The rows are $\mathrm{Re}\,E_z$ (TMz) and
+$\mathrm{Re}\,E_x$ (TEz). The columns are the incident wave, the
+scattered field, and the total field. The annotation is the interior
+window of each piece: lit-side relative $L^2$, absorber-shadow mean
+$|E|$, then the right-hand lit and shadow relative $L^2$.}
+\label{fig:piecewise-fields}
+\end{figure}
+
+\clearpage
 \section{Tests and later slices}
 \label{sec:tests}
 
-The suite is \texttt{pytest} from the project root, ninety-three tests in
+The suite is \texttt{pytest} from the project root, ninety-seven tests in
 \texttt{tests/}. Milestone~1 checks the curls, the adjoint, the cavity
 eigenvalues, the manufactured solve, the invariant and the CFL growth, and
 the fully discrete dispersion, with relative or absolute bars from
@@ -1971,12 +2042,25 @@ both errors by more than half. The same cell with phase one stays above
 $0.5$ in both polarizations. The Floquet orders $m=\pm 1$, on the
 electric row a quarter of the way up the cell, stay under $10^{-8}$ of
 the specular amplitude. The example in Sec.~\ref{sec:ex-bloch} annotates
-$9.63\%$ and $8.91\%$ at $20$ cells per wavelength. A failing
-bar is a reason to refine the grid in that test, not to widen the bar.
+$9.63\%$ and $8.91\%$ at $20$ cells per wavelength.
+A piecewise sheet, $6\lambda$ long at $10$ cells per wavelength and split
+into $3\lambda+3\lambda$, with a PML of $6$ cells, compares each piece
+with that piece's analytic field. The windows sit one wavelength inside
+the ends and the junction. The left piece is the absorber
+$\chi_{ee}=\chi_{mm}=-2j/k$ and the right piece is $\chi_{ee}=0.5$,
+$\chi_{mm}=0.25$. In both polarizations the lit-side relative $L^2$ stays
+under $0.25$ on the absorber and under $0.18$ on the right piece. The
+absorber shadow is an rms of $|E|$, because that transmission is zero,
+and it stays under $0.20$. The right-hand shadow stays under $0.55$.
+That shadow matches a uniform sheet of the same susceptibilities: the
+ends diffract. The $10\lambda$ figure is the example in
+Sec.~\ref{sec:ex-piecewise}.
+
+A failing bar is a reason to refine the grid in that test, not to widen the bar.
 
 The formulation note already names the sheet work that remains
-to be coded: a spatially varying $\chi(\mathbf{r})$, a spatially dispersive
-$\chi(k_t)$, and Lorentz poles on the sheet. The Fresnel
+to be coded: a spatially dispersive $\chi(k_t)$ and Lorentz poles
+on the sheet. The Fresnel
 and dielectric-cylinder domain figures still draw an orange thickness as
 a layout. Those two solves use the Dirichlet trace. The open PEC cylinder
 of Sec.~\ref{sec:ex-pec}, the open dielectric cylinder of

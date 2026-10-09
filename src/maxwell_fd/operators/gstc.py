@@ -17,7 +17,8 @@ electric rows, written as a second difference of ``E_z``. TEz ignores it.
 ``chi_em`` and ``chi_me`` add ``(jω/c) χ (n̂ × field)`` to both
 polarizations. ``chi_em`` multiplies the averaged tangential ``H`` in the
 magnetic jump and ``chi_me`` multiplies the averaged tangential ``E`` in
-the electric jump.
+the electric jump. A piecewise sheet evaluates those five susceptibilities
+on the piece that contains the cut sample. The stencil is unchanged.
 ``incident_load`` moves a continuous incident wave onto the sheet rows.
 The electric rows of that load stay zero: the incident field already
 satisfies the bulk stencil up to Yee dispersion.
@@ -96,16 +97,16 @@ def incident_load(
     cuts, _h_index = _cuts(grid, layout, face, sheet)
     periodic_y = grid.periodic_axes()[1]
     j_plus = (face + 1) % grid.ny if periodic_y else face + 1
-    alpha = 1j * float(omega) * EPS0 * complex(sheet.chi_ee) / 2.0
-    beta = 1j * float(omega) * MU0 * complex(sheet.chi_mm) / 2.0
-    kappa_em = _cross_kappa(sheet.chi_em, omega)
-    kappa_me = _cross_kappa(sheet.chi_me, omega)
-    gamma = _chi_nn_gamma(sheet, omega, grid.dx)
+    sample = "hz" if grid.polarization is Polarization.TEZ else "hx"
+    x_samples = grid.coordinates(sample)[0]
     rhs = np.zeros(layout.n_e + 2 * len(cuts), dtype=np.complex128)
     if grid.polarization is Polarization.TEZ:
         tangential = _complex_field(electric, "ex", grid.shapes()["ex"])
         normal_h = _complex_field({"hz": magnetic}, "hz", grid.shapes()["hz"])
         for k, cut in enumerate(cuts):
+            alpha, beta, kappa_em, kappa_me, _gamma = _jump_coefficients(
+                _chi_at(sheet, float(x_samples[cut.i])), omega, grid.dx
+            )
             e_minus = tangential[cut.i, face]
             e_plus = tangential[cut.i, j_plus]
             h_face = normal_h[cut.i, face]
@@ -120,8 +121,11 @@ def incident_load(
         return rhs
     tangential = _complex_field(electric, "ez", grid.shapes()["ez"])
     normal_h = _complex_field({"hx": magnetic}, "hx", grid.shapes()["hx"])
-    ez_id = _global_ids(layout.e)[0] if gamma != 0 else None
+    ez_id = _global_ids(layout.e)[0] if sheet.carries_normal() else None
     for k, cut in enumerate(cuts):
+        alpha, beta, kappa_em, kappa_me, gamma = _jump_coefficients(
+            _chi_at(sheet, float(x_samples[cut.i])), omega, grid.dx
+        )
         e_minus = tangential[cut.i, face]
         e_plus = tangential[cut.i, j_plus]
         h_face = normal_h[cut.i, face]
@@ -183,20 +187,20 @@ def _augment(
     rows = [coo.row.astype(np.int64, copy=False)]
     cols = [coo.col.astype(np.int64, copy=False)]
     data: list[NDArray] = [coo.data.astype(np.complex128, copy=False)]
-    alpha = 1j * float(omega) * EPS0 * complex(sheet.chi_ee) / 2.0
-    beta = 1j * float(omega) * MU0 * complex(sheet.chi_mm) / 2.0
-    kappa_em = _cross_kappa(sheet.chi_em, omega)
-    kappa_me = _cross_kappa(sheet.chi_me, omega)
-    gamma = _chi_nn_gamma(sheet, omega, grid.dx)
     dy = float(grid.dy)
     dx = float(grid.dx)
     tez = grid.polarization is Polarization.TEZ
-    ez_id = _global_ids(layout.e)[0] if gamma != 0 and not tez else None
+    ez_id = _global_ids(layout.e)[0] if sheet.carries_normal() and not tez else None
     periodic_x, periodic_y = grid.periodic_axes()
     _forward, backward = grid.bloch_factors()
     face = magnetic_face(grid, sheet.y)
     j_plus = (face + 1) % grid.ny if periodic_y else face + 1
+    sample = "hz" if tez else "hx"
+    x_samples = grid.coordinates(sample)[0]
     for k, cut in enumerate(cuts):
+        alpha, beta, kappa_em, kappa_me, gamma = _jump_coefficients(
+            _chi_at(sheet, float(x_samples[cut.i])), omega, dx
+        )
         hm = n_e + 2 * k
         hp = hm + 1
         if tez:
@@ -259,14 +263,41 @@ def _cross_kappa(chi: complex, omega: float) -> complex:
     return 1j * float(omega) * value / (2.0 * C0)
 
 
-def _chi_nn_gamma(sheet: SymmetricSheet, omega: float, dx: float) -> complex:
+def _chi_at(
+    sheet: SymmetricSheet, x: float
+) -> tuple[complex, complex, complex, complex, complex]:
+    found = sheet.susceptibility(x)
+    if found is None:
+        raise RuntimeError("a cut sample has no susceptibility")
+    return found
+
+
+def _jump_coefficients(
+    chi: tuple[complex, complex, complex, complex, complex],
+    omega: float,
+    dx: float,
+) -> tuple[complex, complex, complex, complex, complex]:
+    """``(α, β, κ_em, κ_me, γ)`` of one cut face."""
+    chi_ee, chi_mm, chi_nn, chi_em, chi_me = chi
+    alpha = 1j * float(omega) * EPS0 * complex(chi_ee) / 2.0
+    beta = 1j * float(omega) * MU0 * complex(chi_mm) / 2.0
+    return (
+        alpha,
+        beta,
+        _cross_kappa(chi_em, omega),
+        _cross_kappa(chi_me, omega),
+        _nn_gamma(chi_nn, omega, dx),
+    )
+
+
+def _nn_gamma(chi_nn: complex, omega: float, dx: float) -> complex:
     """Coefficient of one ``E_z`` second difference in the TMz jump.
 
     ``H_y`` from Faraday is ``-∂_x E_z / (j ω μ_0)``. Averaging the two
     electric rows and differentiating in ``x`` puts
     ``χ_mm^nn / (2 j ω μ_0 Δx²)`` on ``E_z[i+1] - 2 E_z[i] + E_z[i-1]``.
     """
-    normal = complex(sheet.chi_mm_nn)
+    normal = complex(chi_nn)
     if normal == 0:
         return 0j
     return normal / (2.0 * 1j * float(omega) * MU0 * float(dx) * float(dx))
@@ -351,7 +382,7 @@ def _cuts(
         cuts: list[_Cut] = []
         indices: list[int] = []
         for i in range(hx_id.shape[0]):
-            if not _in_span(float(x[i]), sheet):
+            if not _on_sheet(float(x[i]), sheet):
                 continue
             h = int(hx_id[i, face])
             if h < 0:
@@ -372,7 +403,7 @@ def _cuts(
         cuts = []
         indices = []
         for i in range(hz_id.shape[0]):
-            if not _in_span(float(x[i]), sheet):
+            if not _on_sheet(float(x[i]), sheet):
                 continue
             h = int(hz_id[i, face])
             if h < 0:
@@ -393,10 +424,10 @@ def _cuts(
     return cuts, np.asarray(indices, dtype=np.int64)
 
 
-def _in_span(x: float, sheet: SymmetricSheet | None) -> bool:
-    if sheet is None or sheet.x0 is None or sheet.x1 is None:
+def _on_sheet(x: float, sheet: SymmetricSheet | None) -> bool:
+    if sheet is None:
         return True
-    return float(sheet.x0) <= x < float(sheet.x1)
+    return sheet.susceptibility(x) is not None
 
 
 def _complex_field(

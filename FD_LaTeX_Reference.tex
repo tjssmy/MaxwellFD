@@ -35,8 +35,9 @@ resistive sheet are written out against equation numbers. The resistive
 conductance is in the code. The non-dispersive GSTC subcell is the symmetric
 Yee cell: the face unknowns and the local system are derived here, and the
 tangential sheet is in the code. A Bloch phase on the periodic $x$ wrap
-is in the code. Spatially varying $\chi$ and dispersive $\chi$ are
-specified as checks, not as this slice's code.
+is in the code. A piecewise sheet assigns each cut face its own
+susceptibilities. Spatially dispersive $\chi(k_t)$ is specified as a
+check, not as this slice's code.
 \end{abstract}
 
 \tableofcontents
@@ -841,9 +842,10 @@ same table. The open dielectric sphere is the contrast-current row in the
 3D table. The resistive sheet and the symmetric sheet are the last rows
 in the table above the 3D curls. The Bloch cell is in the code: the
 forward $x$ wrap carries $e^{-j k_{B,x} a}$, and the unit cell is
-compared with the analytic oblique sheet. Later slices add the
-comparisons this note already names and that the code does not yet run:
-spatially varying $\chi(\mathbf{r})$ and spatially dispersive
+compared with the analytic oblique sheet. A piecewise sheet assigns
+each cut face its own susceptibilities and is compared with that
+piece's analytic field. A later slice adds the comparison this note
+already names and that the code does not yet run: spatially dispersive
 $\chi(k_t)$.
 
 Prescribed external maps are checked by confirming that the samples the
@@ -1038,7 +1040,7 @@ Several poles superpose. The auxiliary variables are marched with the local
 cell solve. This is the dispersive extension, after the constant-$\chi$ sheet
 matches~\eqref{eq:R} and~\eqref{eq:T}.
 
-\subsection{What waits until the uniform sheet matches}
+\subsection{Piecewise $\chi(x)$ and what remains}
 \label{sec:gstc-later}
 
 The Bloch cell is in the code. Stored samples are the physical field on
@@ -1048,11 +1050,12 @@ The same factors enter the wrapped neighbors of
 $\chi_{mm}^{nn}\partial_x H_y$ and the wrapped TEz link at the right edge.
 A uniform sheet on that cell is specular: the orders $m=\pm 1$ stay below
 $10^{-8}$ of the specular amplitude, beside the analytic reflection and
-transmission. Spatially varying $\chi(\mathbf{r})$ is a different
-$(4\times 4)$ on each cut face, with the same jumps. Spatially dispersive
-$\chi(k_t)$ is a separate operator, checked against MaxwellMOM's
-multi-$k_t$ reductions, and it is not a local $4\times 4$. Those two are
-not in this slice.
+transmission. A piecewise sheet is in the code. Each cut sample takes
+the five susceptibilities of the piece that contains its $x$, and the
+jumps stay the same. A gap between pieces leaves those magnetic samples
+in the bulk curl. Spatially dispersive $\chi(k_t)$ is a separate
+operator, checked against MaxwellMOM's multi-$k_t$ reductions, and it
+is not a local $4\times 4$. Lorentz poles on the sheet remain later.
 
 \section{Software architecture}
 \label{sec:architecture}
@@ -1089,7 +1092,7 @@ Module & Responsibility\\
 \texttt{drivers.fdfd3d} & System~\eqref{eq:fdfd}, optional PML\\
 \texttt{analytics.cavity3d} & Frequency~\eqref{eq:semi} plus the $z$ term\\
 \texttt{analytics.mie3d} & Sphere series with $h_n^{(2)}$\\
-\texttt{materials.sheets} & Resistive $\sigma_{\mathrm{eff}}$, tangential, normal, and magneto-electric $\chi$\\
+\texttt{materials.sheets} & Resistive $\sigma_{\mathrm{eff}}$, tangential, normal, magneto-electric, and piecewise $\chi$\\
 \texttt{operators.gstc} & Symmetric cell, append $H^\pm$\\
 \texttt{analytics.sheets} & $R,T$ from~\eqref{eq:R}, \eqref{eq:T}, and the magneto-electric jumps\\
 \bottomrule
@@ -1165,15 +1168,17 @@ sphere small enough to factor are in the code.
 $\chi_{ee}$ and $\chi_{mm}$, the normal susceptibility
 $\chi_{mm}^{nn}$, and the magneto-electric pair $\chi_{em}$, $\chi_{me}$
 are in the code and are compared with the analytic reflection and
-transmission.
+transmission. A piecewise run assigns each cut sample the five
+susceptibilities of the piece that contains its $x$. The jumps stay
+the same.
 \item Hertzian dipole, compared with the outgoing spherical wave, a
 2D paraxial Gaussian beam on a total-field/scattered-field split, and a
 2D TMz near-to-far integral compared with the leading Hankel wave of a
 line current. A Bloch phase $e^{-j k_{B,x} a}$ on the forward periodic
 $x$ wrap is in the code. A unit cell narrower than one transverse period
 is compared with the analytic oblique sheet.
-\item Profiling, Numba, iterative FDFD, GPU. Spatially varying and spatially
-dispersive $\chi$ remain later.
+\item Profiling, Numba, iterative FDFD, GPU. Spatially dispersive
+$\chi(k_t)$ and Lorentz poles on the sheet remain later.
 \end{enumerate}
 
 Acceleration does not change the curls. Numba and CuPy, when they arrive,

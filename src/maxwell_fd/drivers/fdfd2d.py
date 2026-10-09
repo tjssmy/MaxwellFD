@@ -38,7 +38,9 @@ samples. ``solve`` returns the electric prefix. The jump keeps the
 unstretched curl, so every cut sample must sit where the PML stretch is 1.
 ``chi_mm_nn`` adds ``χ ∂_x H_y`` to the TMz jump and leaves TEz unchanged.
 ``chi_em`` and ``chi_me`` add the magneto-electric coupling on both
-polarizations.
+polarizations. A piecewise sheet assigns each cut sample the
+susceptibilities of the piece that contains its ``x``. The jumps stay
+the same.
 The sheet is not combined with an embedded conductor, and the spatial
 eigenproblem refuses it. Passing ``incident`` makes the unknown the
 scattered field: the continuous incident wave enters through the sheet rows.

@@ -13,8 +13,9 @@ normal magnetic susceptibility ``chi_mm_nn``. ``chi_em`` and ``chi_me``
 are the magneto-electric strengths in front of ``n̂ × H`` and ``n̂ × E``.
 The FDFD driver replaces
 that face. An optional ``x`` interval keeps a finite run of the magnetic
-samples; the default is the whole face. This module does not paint ``σ``
-for it.
+samples; the default is the whole face. ``SymmetricSheet.piecewise`` gives
+each sample the susceptibilities of the piece that contains its ``x``.
+The jumps do not change. This module does not paint ``σ`` for it.
 """
 
 from __future__ import annotations
@@ -39,7 +40,10 @@ class SymmetricSheet:
     magnetic one. A reciprocal sheet uses ``chi_me = chi_em``. The sheet
     sits halfway between electric rows.
     ``x0`` and ``x1`` select the half-open run ``x0 <= x < x1`` of magnetic
-    samples on that face. Omitting both covers the whole face.
+    samples on that face. Omitting both covers the whole face. ``pieces``
+    replaces that one run: each piece carries its own five susceptibilities
+    on its own half-open interval, and a sample outside every piece is not
+    on the sheet.
     """
 
     y: float
@@ -50,6 +54,45 @@ class SymmetricSheet:
     chi_mm_nn: complex = 0.0
     chi_em: complex = 0.0
     chi_me: complex = 0.0
+    pieces: tuple[SymmetricSheet, ...] = ()
+
+    @classmethod
+    def piecewise(cls, y: float, pieces: tuple[SymmetricSheet, ...]) -> SymmetricSheet:
+        """Sheet whose cut faces take χ from ``pieces``.
+
+        Each piece carries its own susceptibilities on ``x0 <= x < x1``.
+        The jumps are the uniform-sheet jumps. Pieces share ``y``, may
+        leave a gap, and may not overlap.
+        """
+        return cls(y, 0.0, 0.0, pieces=tuple(pieces))
+
+    def susceptibility(
+        self, x: float
+    ) -> tuple[complex, complex, complex, complex, complex] | None:
+        """``(chi_ee, chi_mm, chi_mm_nn, chi_em, chi_me)`` at magnetic sample ``x``.
+
+        ``None`` means the sample is not on the sheet.
+        """
+        if self.pieces:
+            for piece in self.pieces:
+                if float(piece.x0) <= x < float(piece.x1):
+                    return (
+                        piece.chi_ee,
+                        piece.chi_mm,
+                        piece.chi_mm_nn,
+                        piece.chi_em,
+                        piece.chi_me,
+                    )
+            return None
+        if self.x0 is not None and not (float(self.x0) <= x < float(self.x1)):
+            return None
+        return (self.chi_ee, self.chi_mm, self.chi_mm_nn, self.chi_em, self.chi_me)
+
+    def carries_normal(self) -> bool:
+        """True when any face has a nonzero ``chi_mm_nn``."""
+        if self.pieces:
+            return any(piece.chi_mm_nn != 0 for piece in self.pieces)
+        return self.chi_mm_nn != 0
 
     def __post_init__(self) -> None:
         if not np.isfinite(self.y):
@@ -73,6 +116,22 @@ class SymmetricSheet:
         object.__setattr__(self, "chi_mm_nn", normal)
         object.__setattr__(self, "chi_em", cross_h)
         object.__setattr__(self, "chi_me", cross_e)
+        try:
+            packed = tuple(self.pieces)
+        except TypeError as exc:
+            raise ValueError("pieces must be a sequence of sheets") from exc
+        if any(not isinstance(piece, SymmetricSheet) for piece in packed):
+            raise ValueError("each piece must be a SymmetricSheet")
+        object.__setattr__(self, "pieces", packed)
+        if packed:
+            if self.x0 is not None or self.x1 is not None:
+                raise ValueError("piecewise sheet sets the extent on each piece")
+            if any(
+                value != 0 for value in (electric, magnetic, normal, cross_h, cross_e)
+            ):
+                raise ValueError("piecewise sheet carries chi on each piece")
+            _validate_pieces(float(self.y), packed)
+            return
         if (self.x0 is None) != (self.x1 is None):
             raise ValueError("sheet extent needs both x0 and x1")
         if self.x0 is None:
@@ -85,6 +144,23 @@ class SymmetricSheet:
             raise ValueError(f"sheet extent must have x0 < x1, got {x0}, {x1}")
         object.__setattr__(self, "x0", x0)
         object.__setattr__(self, "x1", x1)
+
+
+def _validate_pieces(y: float, pieces: tuple[SymmetricSheet, ...]) -> None:
+    spans: list[tuple[float, float]] = []
+    for piece in pieces:
+        if piece.pieces:
+            raise ValueError("a piece cannot contain pieces")
+        if piece.x0 is None or piece.x1 is None:
+            raise ValueError("each piece needs x0 and x1")
+        if float(piece.y) != y:
+            raise ValueError("each piece uses the sheet coordinate")
+        spans.append((float(piece.x0), float(piece.x1)))
+    end: float | None = None
+    for start, stop in sorted(spans):
+        if end is not None and start < end:
+            raise ValueError("sheet pieces overlap")
+        end = stop
 
 
 @dataclass(frozen=True)
