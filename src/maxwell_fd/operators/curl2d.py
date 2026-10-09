@@ -2,8 +2,11 @@
 
 ``curl_e @ e`` stores ∇×E at the H degrees of freedom. ``curl_h @ h`` stores
 ∇×H at the E degrees of freedom. Signs match ``FD_LaTeX_Reference.tex``
-(2.1)--(2.3): with no scale, ``curl_h`` is the transpose of ``curl_e``, and
-``curl_h diag(1/μ) curl_e`` is the positive semi-discrete curl-curl matrix.
+(2.1)--(2.3): with no scale and phase one on the wrap, ``curl_h`` is the
+transpose of ``curl_e``, and ``curl_h diag(1/μ) curl_e`` is the positive
+semi-discrete curl-curl matrix. A Bloch phase ``e^{-j k_{B,x} a}`` on the
+forward ``x`` wrap, and ``e^{+j k_{B,x} a}`` on the backward wrap, makes
+``curl_h`` the conjugate transpose of ``curl_e``.
 
 PEC degrees of freedom omit electric samples fixed at zero, including an
 embedded conductor passed as ``fixed_e``. PMC magnetic samples passed as
@@ -279,6 +282,37 @@ def _weights(
     return coeff * factor[i, j]
 
 
+def _wrap_weight(
+    weight: float | FieldArray, index: NDArray, wrapped: int, factor: complex
+) -> float | FieldArray:
+    """Scale rows whose ``index`` equals ``wrapped`` by one Bloch factor."""
+    if factor == 1.0:
+        return weight
+    rows = np.asarray(index)
+    base = np.asarray(weight)
+    phased = np.empty(rows.shape, dtype=np.result_type(base, np.complex128))
+    phased[...] = base
+    phased[rows == wrapped] *= factor
+    return phased
+
+
+def _shift_x(values: NDArray, shift: int, factor: complex) -> NDArray:
+    """Neighbor along ``x``. ``shift=-1`` is the right sample, ``+1`` the left.
+
+    The sample that crosses the periodic face is multiplied by ``factor``
+    on the way forward and by its conjugate on the way back.
+    """
+    rolled = np.roll(np.asarray(values), shift, axis=0)
+    if factor == 1.0:
+        return rolled
+    phased = np.array(rolled, dtype=np.result_type(rolled, np.complex128))
+    if shift < 0:
+        phased[-1] *= factor
+    else:
+        phased[0] *= np.conjugate(complex(factor))
+    return phased
+
+
 def _curls_tm(
     grid: YeeGrid2D, layout: Layout, scale: CurlScale | None
 ) -> tuple[sparse.csr_matrix, sparse.csr_matrix]:
@@ -289,6 +323,7 @@ def _curls_tm(
     hy_id = _id_map(hy)
     n_hx = hx.i.size
     px, py = grid.periodic_axes()
+    forward, backward = grid.bloch_factors()
     dx, dy = grid.dx, grid.dy
 
     e_rows: list[NDArray[np.int64]] = []
@@ -312,7 +347,13 @@ def _curls_tm(
     hy_rows = n_hx + np.arange(hy.i.size, dtype=np.int64)
     i_hi = (hy.i + 1) % grid.nx if px else hy.i + 1
     whx = _weights(sx_hy, 1.0 / dx, hy.i, hy.j)
-    add_e(_masked(hy_rows, ez_id[i_hi, hy.j], -whx))
+    add_e(
+        _masked(
+            hy_rows,
+            ez_id[i_hi, hy.j],
+            _wrap_weight(-whx, hy.i, grid.nx - 1, forward),
+        )
+    )
     add_e(_masked(hy_rows, ez_id[hy.i, hy.j], whx))
 
     h_rows: list[NDArray[np.int64]] = []
@@ -333,7 +374,14 @@ def _curls_tm(
     wx = _weights(sx_ez, 1.0 / dx, ez.i, ez.j)
     wy = _weights(sy_ez, 1.0 / dy, ez.i, ez.j)
     add_h(_masked(ez_rows, hy_id[ez.i, ez.j], wx, offset=n_hx))
-    add_h(_masked(ez_rows, hy_id[i_lo, ez.j], -wx, offset=n_hx))
+    add_h(
+        _masked(
+            ez_rows,
+            hy_id[i_lo, ez.j],
+            _wrap_weight(-wx, ez.i, 0, backward),
+            offset=n_hx,
+        )
+    )
     add_h(_masked(ez_rows, hx_id[ez.i, ez.j], -wy))
     add_h(_masked(ez_rows, hx_id[ez.i, j_lo], wy))
 
@@ -352,6 +400,7 @@ def _curls_te(
     hz_id = _id_map(hz)
     n_ex = ex.i.size
     px, py = grid.periodic_axes()
+    forward, backward = grid.bloch_factors()
     dx, dy = grid.dx, grid.dy
 
     e_rows: list[NDArray[np.int64]] = []
@@ -371,7 +420,14 @@ def _curls_te(
     j_hi = (hz.j + 1) % grid.ny if py else hz.j + 1
     wx = _weights(sx_hz, 1.0 / dx, hz.i, hz.j)
     wy = _weights(sy_hz, 1.0 / dy, hz.i, hz.j)
-    add_e(_masked(hz_rows, ey_id[i_hi, hz.j], wx, offset=n_ex))
+    add_e(
+        _masked(
+            hz_rows,
+            ey_id[i_hi, hz.j],
+            _wrap_weight(wx, hz.i, grid.nx - 1, forward),
+            offset=n_ex,
+        )
+    )
     add_e(_masked(hz_rows, ey_id[hz.i, hz.j], -wx, offset=n_ex))
     add_e(_masked(hz_rows, ex_id[hz.i, j_hi], -wy))
     add_e(_masked(hz_rows, ex_id[hz.i, hz.j], wy))
@@ -398,7 +454,7 @@ def _curls_te(
     i_lo = (ey.i - 1) % grid.nx if px else ey.i - 1
     wx_ey = _weights(sx_ey, 1.0 / dx, ey.i, ey.j)
     add_h(_masked(ey_rows, hz_id[ey.i, ey.j], -wx_ey))
-    add_h(_masked(ey_rows, hz_id[i_lo, ey.j], wx_ey))
+    add_h(_masked(ey_rows, hz_id[i_lo, ey.j], _wrap_weight(wx_ey, ey.i, 0, backward)))
 
     curl_e = _coo(e_rows, e_cols, e_data, (layout.n_h, layout.n_e))
     curl_h = _coo(h_rows, h_cols, h_data, (layout.n_e, layout.n_h))
@@ -409,13 +465,14 @@ def _array_curl_e_tm(
     grid: YeeGrid2D, ez: FieldArray, scale: CurlScale | None
 ) -> dict[str, FieldArray]:
     px, py = grid.periodic_axes()
+    forward, _backward = grid.bloch_factors()
     d_ez_dy = (
         (np.roll(ez, -1, axis=1) - ez) / grid.dy
         if py
         else (ez[:, 1:] - ez[:, :-1]) / grid.dy
     )
     minus_d_ez_dx = (
-        -(np.roll(ez, -1, axis=0) - ez) / grid.dx
+        -(_shift_x(ez, -1, forward) - ez) / grid.dx
         if px
         else -(ez[1:, :] - ez[:-1, :]) / grid.dx
     )
@@ -432,14 +489,16 @@ def _array_curl_h_tm(
 ) -> FieldArray:
     _, _, sx_ez, sy_ez = _tm_factors(scale, grid)
     px, py = grid.periodic_axes()
+    forward, _backward = grid.bloch_factors()
     if px and py:
-        d_hy_dx = (hy - np.roll(hy, 1, axis=0)) / grid.dx
+        d_hy_dx = (hy - _shift_x(hy, 1, forward)) / grid.dx
         d_hx_dy = (hx - np.roll(hx, 1, axis=1)) / grid.dy
     elif px:
-        dtype = np.result_type(hy, hx, np.float64)
+        shifted = _shift_x(hy[:, 1:-1], 1, forward)
+        dtype = np.result_type(hy, hx, shifted, np.float64)
         d_hy_dx = np.zeros(grid.shapes()["ez"], dtype=dtype)
         d_hx_dy = np.zeros(grid.shapes()["ez"], dtype=dtype)
-        d_hy_dx[:, 1:-1] = (hy[:, 1:-1] - np.roll(hy[:, 1:-1], 1, axis=0)) / grid.dx
+        d_hy_dx[:, 1:-1] = (hy[:, 1:-1] - shifted) / grid.dx
         d_hx_dy[:, 1:-1] = (hx[:, 1:] - hx[:, :-1]) / grid.dy
     else:
         d_hy_dx = np.zeros(grid.shapes()["ez"], dtype=np.result_type(hy, np.float64))
@@ -457,8 +516,9 @@ def _array_curl_e_te(
     grid: YeeGrid2D, ex: FieldArray, ey: FieldArray, scale: CurlScale | None
 ) -> dict[str, FieldArray]:
     px, py = grid.periodic_axes()
+    forward, _backward = grid.bloch_factors()
     d_ey_dx = (
-        (np.roll(ey, -1, axis=0) - ey) / grid.dx
+        (_shift_x(ey, -1, forward) - ey) / grid.dx
         if px
         else (ey[1:, :] - ey[:-1, :]) / grid.dx
     )
@@ -480,14 +540,16 @@ def _array_curl_h_te(
 ) -> dict[str, FieldArray]:
     _, _, sy_ex, sx_ey = _te_factors(scale, grid)
     px, py = grid.periodic_axes()
+    forward, _backward = grid.bloch_factors()
     if px and py:
         d_hz_dy = (hz - np.roll(hz, 1, axis=1)) / grid.dy
-        minus_d_hz_dx = -(hz - np.roll(hz, 1, axis=0)) / grid.dx
+        minus_d_hz_dx = -(hz - _shift_x(hz, 1, forward)) / grid.dx
     elif px:
-        dtype = np.result_type(hz, np.float64)
+        shifted = _shift_x(hz, 1, forward)
+        dtype = np.result_type(hz, shifted, np.float64)
         d_hz_dy = np.zeros(grid.shapes()["ex"], dtype=dtype)
         d_hz_dy[:, 1:-1] = (hz[:, 1:] - hz[:, :-1]) / grid.dy
-        minus_d_hz_dx = -(hz - np.roll(hz, 1, axis=0)) / grid.dx
+        minus_d_hz_dx = -(hz - shifted) / grid.dx
     else:
         dtype = np.result_type(hz, np.float64)
         d_hz_dy = np.zeros(grid.shapes()["ex"], dtype=dtype)

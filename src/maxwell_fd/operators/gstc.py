@@ -192,7 +192,8 @@ def _augment(
     dx = float(grid.dx)
     tez = grid.polarization is Polarization.TEZ
     ez_id = _global_ids(layout.e)[0] if gamma != 0 and not tez else None
-    periodic_y = grid.periodic_axes()[1]
+    periodic_x, periodic_y = grid.periodic_axes()
+    _forward, backward = grid.bloch_factors()
     face = magnetic_face(grid, sheet.y)
     j_plus = (face + 1) % grid.ny if periodic_y else face + 1
     for k, cut in enumerate(cuts):
@@ -202,7 +203,8 @@ def _augment(
             _add(rows, cols, data, cut.e_minus, hm, -1.0 / dy)
             _add(rows, cols, data, cut.e_plus, hp, 1.0 / dy)
             _average(rows, cols, data, cut.ey_here, hm, hp, 0.5 / dx)
-            _average(rows, cols, data, cut.ey_right, hm, hp, -0.5 / dx)
+            right_phase = backward if periodic_x and cut.i == grid.nx - 1 else 1.0
+            _average(rows, cols, data, cut.ey_right, hm, hp, -0.5 / dx * right_phase)
             _equation(
                 rows,
                 cols,
@@ -272,18 +274,22 @@ def _chi_nn_gamma(sheet: SymmetricSheet, omega: float, dx: float) -> complex:
 
 def _nn_points(
     grid: YeeGrid2D, i: int, face: int, j_plus: int
-) -> list[tuple[int, int, float]]:
+) -> list[tuple[int, int, complex]]:
     """``(i, j, weight)`` of the two-row second difference, before ``γ``."""
     periodic_x = grid.periodic_axes()[0]
+    forward, backward = grid.bloch_factors()
     if periodic_x:
         left, right = (i - 1) % grid.nx, (i + 1) % grid.nx
+        left_weight = backward if i == 0 else 1.0
+        right_weight = forward if i == grid.nx - 1 else 1.0
     else:
         left, right = i - 1, i + 1
-    points: list[tuple[int, int, float]] = []
+        left_weight, right_weight = 1.0, 1.0
+    points: list[tuple[int, int, complex]] = []
     for j in (face, j_plus):
-        points.append((left, j, 1.0))
+        points.append((left, j, left_weight))
         points.append((i, j, -2.0))
-        points.append((right, j, 1.0))
+        points.append((right, j, right_weight))
     return points
 
 
@@ -298,8 +304,8 @@ def _nn_column(grid: YeeGrid2D, ez_id: IntArray, index: int, j: int) -> int:
 
 def _nn_columns(
     grid: YeeGrid2D, ez_id: IntArray, i: int, face: int, j_plus: int
-) -> list[tuple[int, float]]:
-    columns: list[tuple[int, float]] = []
+) -> list[tuple[int, complex]]:
+    columns: list[tuple[int, complex]] = []
     for index, j, weight in _nn_points(grid, i, face, j_plus):
         column = _nn_column(grid, ez_id, index, j)
         if column < 0:
@@ -437,7 +443,7 @@ def _average(
     row: int,
     hm: int,
     hp: int,
-    value: float,
+    value: complex,
 ) -> None:
     _add(rows, cols, data, row, hm, value)
     _add(rows, cols, data, row, hp, value)

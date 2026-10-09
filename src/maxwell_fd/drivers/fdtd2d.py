@@ -123,6 +123,7 @@ def step_tmz(
     embedded PEC and PMC samples.
     """
     _require(grid, Polarization.TMZ)
+    _require_real_wrap(grid)
     _match_tm(grid, components, state)
     masks = _masks(grid, conductors)
     if pml is None:
@@ -164,6 +165,7 @@ def step_tez(
 ) -> None:
     """Advance a TEz state by one full time step, in place."""
     _require(grid, Polarization.TEZ)
+    _require_real_wrap(grid)
     _match_te(grid, components, state)
     masks = _masks(grid, conductors)
     if pml is None:
@@ -298,6 +300,11 @@ def _require(grid: YeeGrid2D, polarization: Polarization) -> None:
         raise ValueError(
             f"grid polarization is {grid.polarization.value}, expected {polarization.value}"
         )
+
+
+def _require_real_wrap(grid: YeeGrid2D) -> None:
+    if grid.bloch_x != 0.0:
+        raise ValueError("Bloch phase is an FDFD boundary")
 
 
 def _match_tm(grid: YeeGrid2D, components: TMComponents, state: TMzState) -> None:

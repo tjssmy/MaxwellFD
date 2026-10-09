@@ -6,8 +6,9 @@ A grid is ``nx`` by ``ny`` cells of size ``dx`` by ``dy``. The domain is
 PEC stores the boundary electric samples and holds them at zero. Periodic
 identification drops the duplicate far side, so every stored sample is an
 unknown and curls wrap. ``Boundary.PERIODIC_X`` drops the duplicate ``x``
-side and keeps the PEC samples on ``y = 0`` and ``y = b``. Locations and
-shapes are Table 1 of ``FD_LaTeX_Reference.tex``.
+side and keeps the PEC samples on ``y = 0`` and ``y = b``. A nonzero
+``bloch_x`` multiplies that forward ``x`` image by ``e^{-j k_{B,x} a}``.
+Locations and shapes are Table 1 of ``FD_LaTeX_Reference.tex``.
 """
 
 from __future__ import annotations
@@ -29,9 +30,10 @@ class Boundary(Enum):
     """Outer boundary treatment.
 
     ``PEC`` and ``PERIODIC`` apply to all four sides. ``PERIODIC_X`` is
-    periodic in ``x`` and PEC in ``y``. The periodic identification is phase
-    one, so an oblique sheet closes when the width is an integer number of
-    transverse wavelengths.
+    periodic in ``x`` and PEC in ``y``. The periodic identification carries
+    the Bloch phase ``e^{-j k_{B,x} a}`` on a forward ``x`` wrap. ``k_{B,x}``
+    is zero unless the grid sets it, so an oblique sheet of one transverse
+    period still closes with phase one.
     """
 
     PEC = "pec"
@@ -50,6 +52,8 @@ class YeeGrid2D:
         dy: float,
         polarization: Polarization,
         boundary: Boundary,
+        *,
+        bloch_x: float = 0.0,
     ) -> None:
         if int(nx) != nx or int(ny) != ny or nx < 1 or ny < 1:
             raise ValueError(f"nx and ny must be positive integers, got {nx}, {ny}")
@@ -59,15 +63,40 @@ class YeeGrid2D:
             raise ValueError("A PEC grid needs at least 2 cells in each direction")
         if boundary is Boundary.PERIODIC_X and ny < 2:
             raise ValueError("A periodic-x grid needs at least 2 cells in y")
+        if isinstance(bloch_x, bool):
+            raise ValueError(f"bloch_x must be a finite wave number, got {bloch_x}")
+        try:
+            wavenumber = float(bloch_x)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"bloch_x must be a finite wave number, got {bloch_x}"
+            ) from exc
+        if not np.isfinite(wavenumber):
+            raise ValueError(f"bloch_x must be a finite wave number, got {bloch_x}")
+        if wavenumber != 0.0 and boundary is Boundary.PEC:
+            raise ValueError("Bloch phase needs a periodic x face")
         self.nx = int(nx)
         self.ny = int(ny)
         self.dx = float(dx)
         self.dy = float(dy)
         self.polarization = polarization
         self.boundary = boundary
+        self.bloch_x = wavenumber
+
+    def bloch_factors(self) -> tuple[complex, complex]:
+        """Forward and backward factors on an ``x`` wrap.
+
+        The forward image, one period to the right, is multiplied by
+        ``e^{-j k_{B,x} a}``. The backward image is multiplied by
+        ``e^{+j k_{B,x} a}``. Both factors are 1 when ``k_{B,x}`` is zero.
+        """
+        if self.bloch_x == 0.0:
+            return 1.0, 1.0
+        forward = complex(np.exp(-1j * self.bloch_x * self.a))
+        return forward, complex(np.conjugate(forward))
 
     def periodic_axes(self) -> tuple[bool, bool]:
-        """Periodicity of the ``x`` face and the ``y`` face, phase one."""
+        """Periodicity of the ``x`` face and the ``y`` face."""
         if self.boundary is Boundary.PERIODIC:
             return True, True
         if self.boundary is Boundary.PERIODIC_X:

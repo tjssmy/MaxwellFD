@@ -115,6 +115,12 @@ scattered-field side stays quiet.
 interior carries $E_z$ on the nodes and the averaged tangential $H$.
 The far field of a line current is compared with the leading Hankel
 wave.
+\item A Bloch phase on the periodic $x$ wrap. Stored samples are the
+physical field on $[0,a)$. The forward image carries $e^{-j k_{B,x} a}$
+and the backward image carries $e^{+j k_{B,x} a}$. The factor is one
+when $k_{B,x}=0$. A cell $0.8\lambda$ wide at $30^\circ$ uses the
+susceptibilities of the phase-one oblique sheet and the analytic trace
+on the $y$ ends. The packed electric field is compared with that trace.
 \item A resistive sheet of normal $\hat{\mathbf{y}}$. The conductance
 $1/(Z_s\Delta y)$ is added to $\sigma$ on the tangential electric samples
 of the one Ampere cell that contains the sheet. The closed-box check
@@ -175,10 +181,16 @@ magnetic samples.
 On a PEC wall the tangential electric field is the boundary value stored
 with the grid. Milestone~1 sets that value to zero. The slab and the
 cylinder instead prescribe the analytic tangential trace and leave the
-impressed current at zero. A periodic wall identifies opposite faces with
-phase one. \texttt{YeeGrid2D} accepts \texttt{Boundary.PEC},
-\texttt{Boundary.PERIODIC}, and \texttt{Boundary.PERIODIC\_X}. The last of
-these is periodic in $x$ and PEC in $y$. A PML is the stretch of
+impressed current at zero. A periodic wall identifies opposite faces.
+The forward $x$ wrap multiplies that image by $e^{-j k_{B,x} a}$, and
+the backward wrap multiplies by $e^{+j k_{B,x} a}$. The factor is one
+when $k_{B,x}=0$, which is the milestone-1 wall and the cell whose
+width is one transverse period. \texttt{YeeGrid2D} accepts
+\texttt{Boundary.PEC}, \texttt{Boundary.PERIODIC}, and
+\texttt{Boundary.PERIODIC\_X}. The last of these is periodic in $x$ and
+PEC in $y$. A nonzero $k_{B,x}$ needs one of those two periodic walls.
+The $y$ identification stays at phase one. The leapfrog and the real
+eigenproblem refuse a nonzero Bloch wave number. A PML is the stretch of
 Sec.~\ref{sec:pml} on a band inside that PEC wall. A resistive sheet of
 normal $\hat{\mathbf{y}}$ adds
 $\sigma_{\mathrm{eff}}=\sigma+1/(Z_s\Delta y)$ to the tangential electric
@@ -198,7 +210,9 @@ optional half-open interval $x_0\le x<x_1$ keeps a finite run of those
 samples. The default is the whole face. The jump uses the unstretched
 stencil, so a cut inside the PML is refused. $\chi_{mm}^{nn}$ adds
 $\chi_{mm}^{nn}\partial_x H_{y,\mathrm{av}}$ on the TMz side of that jump
-and leaves TEz unchanged. The
+and leaves TEz unchanged. On a periodic $x$ face the wrapped neighbors
+of that derivative, and the wrapped TEz link at the right edge, carry
+the same Bloch factor. The
 resistive conductance is a separate update. An embedded PMC is a mask on magnetic samples inside
 the grid. The outer wall is still \texttt{Boundary.PEC},
 \texttt{Boundary.PERIODIC}, or \texttt{Boundary.PERIODIC\_X}.
@@ -510,7 +524,9 @@ component. Those coordinates are the positions the staircase tests.
 
 The discrete operators are centered differences. On the PEC grids they are
 transposes of each other once the boundary electric samples have been
-removed from the unknown vector. An invalid degree-of-freedom id is $-1$
+removed from the unknown vector. With phase one, the periodic curls are
+transposes as well. A Bloch phase makes \texttt{curl\_h} the conjugate
+transpose of \texttt{curl\_e}. An invalid degree-of-freedom id is $-1$
 and must be masked before any component offset is added. TMz uses
 \begin{equation}
 (\nabla\times E)_x = \partial_y E_z,
@@ -627,7 +643,8 @@ are rejected: the band needs the PEC backing.
 
 FDFD rebuilds the sparse curls at the solve frequency, since $s_w$ depends
 on $\omega$. The eigenproblem keeps the unstretched real curl, and
-\texttt{spatial\_operator} refuses an active PML.
+\texttt{spatial\_operator} refuses an active PML. It also refuses a
+nonzero Bloch wave number, because that phase makes the curls complex.
 
 The leapfrog stores one auxiliary per stretched derivative. It advances
 that auxiliary with the exponential integrator of $1/s_w$, on the same
@@ -809,7 +826,7 @@ Module & Role\\
 \texttt{materials.conductors}
 & Staircase PEC and PMC masks, \texttt{YBand} and \texttt{Circle}\\
 \texttt{operators.curl2d}
-& Sparse \texttt{curl\_e}, \texttt{curl\_h}, array curls, DOF layout, optional stretch\\
+& Sparse \texttt{curl\_e}, \texttt{curl\_h}, array curls, DOF layout, optional stretch, Bloch phase on the $x$ wrap\\
 \texttt{operators.gstc}
 & Symmetric cell: remove the cut sample and append $H^-$, $H^+$\\
 \texttt{operators.pml}
@@ -1638,6 +1655,74 @@ $L^2$ is the packed free electric vector.}
 \end{figure}
 
 \clearpage
+\subsection{Bloch unit cell}
+\label{sec:ex-bloch}
+
+\begin{verbatim}
+python examples/fdfd/2d/bloch_sheet.py
+\end{verbatim}
+
+\texttt{--chi-ee}, \texttt{--chi-mm}, and \texttt{--chi-nn} are the
+tangential electric susceptibility, the tangential magnetic
+susceptibility, and the normal magnetic susceptibility. The defaults are
+$0.5$, $0.25$, and $0.4$, the same sheet as Sec.~\ref{sec:ex-periodic}.
+\texttt{--theta} is the incidence angle in degrees, measured from the
+sheet normal, and the default is $30$. \texttt{--wavelength},
+\texttt{--points}, and \texttt{--height} default to $1$, $20$, and $4$.
+\texttt{--width} is the cell width in wavelengths, and the default is
+$0.8$. \texttt{--chi-em} and \texttt{--chi-me} default to zero and stay
+out of the folder name at that default.
+
+The sheet spans the magnetic face. The width is $0.8\lambda$, which is
+$0.4$ of the transverse period at $30^\circ$, so a phase of one does not
+close the oblique wave. \texttt{Boundary.PERIODIC\_X} identifies the $x$
+ends, and the grid sets $k_{B,x}=k\sin\theta$. The forward wrap then
+carries $e^{-j\phi}$ with $\phi=k_{B,x}a$. On this grid $\phi=0.8\pi$
+and that factor is $-0.809-0.588j$. The backward wrap carries the
+conjugate. The $y$ ends carry the analytic total field. The reflection
+and transmission are those of the uniform sheet in
+Sec.~\ref{sec:ex-finite-oblique}.
+
+The default run writes
+\begin{center}
+\path{bloch_sheet_lam1_theta30_width0.8_points20_height4_chiee0.5_chimm0.25_chinn0.4/}
+\end{center}
+with \texttt{domain.png} and \texttt{bloch\_sheet.png}. The cell is
+$0.8\lambda$ wide and $4\lambda$ tall, a $16\times 80$ grid at
+$\Delta=0.05$. The field figure shows $\mathrm{Re}\,E_z$ (TMz) and
+$\mathrm{Re}\,E_x$ (TEz). The columns are FD, Analytic, and
+FD$-$Analytic. On this grid the annotated $L^2$ errors are $9.63\%$
+(TMz) and $8.91\%$ (TEz). The regression uses the same susceptibilities
+at $10$ cells per wavelength, with the bars $0.22$ and $0.18$. Four
+times that resolution drops both errors by more than half. The same cell
+with phase one stays above $0.5$ in both polarizations. The orders
+$m=\pm 1$ of the demodulated field, on an electric row a quarter of the
+way up the cell, stay under $10^{-8}$ of the specular amplitude.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[height=0.55\textheight]{../examples/fdfd/2d/bloch_sheet_lam1_theta30_width0.8_points20_height4_chiee0.5_chimm0.25_chinn0.4/domain.png}
+\caption{Default Bloch-cell domain. The blue line is the sheet on a
+magnetic face. The green lines are the analytic trace on the $y$ ends.
+The dashed purple lines are the Bloch identification of the $x$ ends.
+The width is $0.8$ wavelengths, and the title prints the forward factor.}
+\label{fig:bloch-domain}
+\end{figure}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{../examples/fdfd/2d/bloch_sheet_lam1_theta30_width0.8_points20_height4_chiee0.5_chimm0.25_chinn0.4/bloch_sheet.png}
+\caption{Bloch cell at $\chi_{ee}=0.5$, $\chi_{mm}=0.25$,
+$\chi_{mm}^{nn}=0.4$, $\lambda=1$, $\theta=30^\circ$, width $0.8\lambda$,
+and height $4\lambda$, on a $16\times 80$ grid at $\Delta=0.05$. The
+rows are $\mathrm{Re}\,E_z$ (TMz) and $\mathrm{Re}\,E_x$ (TEz). The
+columns are the Yee field, the analytic field, and their difference.
+The annotated $L^2$ is the packed free electric vector, and the FD
+title prints the analytic reflection and transmission.}
+\label{fig:bloch-fields}
+\end{figure}
+
+\clearpage
 \subsection{Finite oblique sheet}
 \label{sec:ex-finite-oblique}
 
@@ -1803,7 +1888,7 @@ side and the shadow over the central $6\lambda$ of the sheet.}
 \section{Tests and later slices}
 \label{sec:tests}
 
-The suite is \texttt{pytest} from the project root, ninety tests in
+The suite is \texttt{pytest} from the project root, ninety-three tests in
 \texttt{tests/}. Milestone~1 checks the curls, the adjoint, the cavity
 eigenvalues, the manufactured solve, the invariant and the CFL growth, and
 the fully discrete dispersion, with relative or absolute bars from
@@ -1877,11 +1962,21 @@ $\chi_{em}=\chi_{me}=0.2$, the error at $20$ cells per wavelength stays
 under $0.16$ in both polarizations. The example in
 Sec.~\ref{sec:ex-periodic-cross} annotates $8.38\%$ and $7.62\%$ at $20$
 cells per wavelength. The $10\lambda$ sheet with those susceptibilities
-at $30^\circ$ is the open example in Sec.~\ref{sec:ex-finite-cross}. A failing
+at $30^\circ$ is the open example in Sec.~\ref{sec:ex-finite-cross}. The
+Bloch cell, $0.8\lambda$ wide and $4\lambda$ tall at $30^\circ$, with
+$\chi_{ee}=0.5$, $\chi_{mm}=0.25$, $\chi_{mm}^{nn}=0.4$, and
+\texttt{Boundary.PERIODIC\_X}, stays under $0.22$ (TMz) and $0.18$
+(TEz) at $10$ cells per wavelength. Four times that resolution drops
+both errors by more than half. The same cell with phase one stays above
+$0.5$ in both polarizations. The Floquet orders $m=\pm 1$, on the
+electric row a quarter of the way up the cell, stay under $10^{-8}$ of
+the specular amplitude. The example in Sec.~\ref{sec:ex-bloch} annotates
+$9.63\%$ and $8.91\%$ at $20$ cells per wavelength. A failing
 bar is a reason to refine the grid in that test, not to widen the bar.
 
-The formulation note already fixes the formulas for the slice that remains
-to be coded: a Bloch phase. The Fresnel
+The formulation note already names the sheet work that remains
+to be coded: a spatially varying $\chi(\mathbf{r})$, a spatially dispersive
+$\chi(k_t)$, and Lorentz poles on the sheet. The Fresnel
 and dielectric-cylinder domain figures still draw an orange thickness as
 a layout. Those two solves use the Dirichlet trace. The open PEC cylinder
 of Sec.~\ref{sec:ex-pec}, the open dielectric cylinder of

@@ -42,6 +42,10 @@ polarizations.
 The sheet is not combined with an embedded conductor, and the spatial
 eigenproblem refuses it. Passing ``incident`` makes the unknown the
 scattered field: the continuous incident wave enters through the sheet rows.
+A Bloch phase on the periodic ``x`` wrap is ``e^{-j k_{B,x} a}`` on the
+forward image and ``e^{+j k_{B,x} a}`` on the backward image. The real
+eigenproblem refuses a nonzero ``k_{B,x}`` because that phase makes the
+curls complex.
 
 A horizontal total-field/scattered-field split is an impressed current,
 not a new unknown. ``tfsf_y_current`` evaluates that current on the two
@@ -132,6 +136,8 @@ class FDFDOperator:
         """``K`` and ``M`` of eq. (4.2), with real positive ``ε`` and ``μ``."""
         if self.sheet is not None:
             raise ValueError("spatial eigenproblem has no GSTC sheet")
+        if self.grid.bloch_x != 0.0:
+            raise ValueError("spatial eigenproblem has no Bloch phase")
         if self.profile is not None:
             raise ValueError("spatial eigenproblem uses the unstretched real curl")
         if self.eps_is_complex or np.any(self.sigma_e != 0.0):
