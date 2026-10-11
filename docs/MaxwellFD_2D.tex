@@ -62,6 +62,8 @@ one periodic cell at an angle is compared with the analytic reflection and
 transmission. The same susceptibilities on a $10\lambda$ sheet at $30^\circ$
 are the open scattered-field run. A piecewise sheet gives each magnetic
 sample the susceptibilities of the piece that contains its $x$.
+Polynomial electric dispersion $\chi_{ee0}+\chi_{ee2}k_t^2$ is the
+normal susceptibility $\chi_{mm}^{nn}=\chi_{ee2}k^2$.
 \end{abstract}
 
 \tableofcontents
@@ -146,6 +148,10 @@ each piece with that piece's analytic field, one wavelength inside
 the ends and the junction. The left piece is the normal-incidence
 absorber and the right piece is $\chi_{ee}=0.5$, $\chi_{mm}=0.25$.
 The $10\lambda$ run of that sheet is the open example.
+\item Polynomial electric dispersion on a periodic cell. The
+susceptibility $\chi_{ee0}+\chi_{ee2}k_t^2$ is the normal term
+$\chi_{mm}^{nn}=\chi_{ee2}k^2$. TMz is compared with that
+susceptibility at $k\sin\theta$. TEz keeps $\chi_{ee0}$.
 \end{enumerate}
 
 MaxwellFD does not import MaxwellMOM. The shared pieces are the time
@@ -222,7 +228,9 @@ and leaves TEz unchanged. On a periodic $x$ face the wrapped neighbors
 of that derivative, and the wrapped TEz link at the right edge, carry
 the same Bloch factor. A piecewise sheet assigns each magnetic sample
 the five susceptibilities of the piece that contains its $x$. The jumps
-stay the same, and a sample outside every piece stays in the bulk curl. The
+stay the same, and a sample outside every piece stays in the bulk curl.
+Polynomial electric dispersion $\chi_{ee0}+\chi_{ee2}k_t^2$ uses that
+same jump with $\chi_{mm}^{nn}=\chi_{ee2}k^2$. The
 resistive conductance is a separate update. An embedded PMC is a mask on magnetic samples inside
 the grid. The outer wall is still \texttt{Boundary.PEC},
 \texttt{Boundary.PERIODIC}, or \texttt{Boundary.PERIODIC\_X}.
@@ -911,7 +919,8 @@ ends of the half-open interval. An incident wave passed to \texttt{solve}
 makes the unknown the scattered field. The sheet may share a PML box when
 every cut sample is unstretched. A piecewise sheet passes one interval
 on each piece, and each cut sample uses the susceptibilities of the piece
-that contains its $x$.
+that contains its $x$. Polynomial electric dispersion passes
+$\chi_{ee0}$ and $\chi_{mm}^{nn}=\chi_{ee2}k^2$ to that same sheet.
 
 The real eigenproblem is \texttt{spatial\_operator}. It returns the pair
 $(K,M)$ of the unstretched curl and refuses an active PML. TEz results
@@ -936,6 +945,7 @@ python examples/fdfd/2d/resistive_sheet.py
 python examples/fdfd/2d/symmetric_sheet.py
 python examples/fdfd/2d/finite_sheet.py
 python examples/fdfd/2d/piecewise_sheet.py
+python examples/fdfd/2d/dispersive_sheet.py
 python examples/fdfd/2d/periodic_sheet.py
 python examples/fdfd/3d/cavity.py
 python examples/fdfd/3d/dielectric_sphere.py
@@ -960,7 +970,8 @@ inner edge together. The 3D cavity figure is one panel per pure mode.
 The open sphere is one row of $\mathrm{Re}\,E_x$ on the $xz$ plane
 through the center: FD, Mie, and FD$-$Mie. The resistive sheet and the symmetric sheet use the columns FD, Sheet,
 and FD$-$Sheet, with $\mathrm{Re}\,E_z$ and $\mathrm{Re}\,E_x$. The periodic
-oblique sheet uses FD, Analytic, and FD$-$Analytic. The finite sheet and
+oblique sheet and the dispersive sheet use FD, Analytic, and
+FD$-$Analytic. The finite sheet and
 the piecewise sheet use Incident, Scattered, and Total.
 
 \subsection{Fresnel slab}
@@ -1956,10 +1967,59 @@ $|E|$, then the right-hand lit and shadow relative $L^2$.}
 \end{figure}
 
 \clearpage
+\subsection{Dispersive periodic sheet}
+\label{sec:ex-dispersive}
+
+\begin{verbatim}
+python examples/fdfd/2d/dispersive_sheet.py
+\end{verbatim}
+
+The cell is one transverse period wide and $4\lambda$ tall, at $20$ cells
+per wavelength and $\theta=30^\circ$. Phase one on the periodic $x$ wrap
+closes the oblique wave. The $y$ ends carry the analytic trace.
+$\chi_{ee0}=0.5$, $\chi_{ee2}=0.01$, and $\chi_{mm}=0.25$. The operator
+is the normal susceptibility $\chi_{mm}^{nn}=\chi_{ee2}k^2=0.395$. At
+this angle the TMz susceptibility is $\chi_{ee0}+\chi_{ee2}k^2\sin^2\theta
+=0.599$. TEz keeps $\chi_{ee0}$, because the normal term does not enter
+its jump.
+
+The run writes
+\begin{center}
+\path{dispersive_sheet_lam1_theta30_points20_height4_chiee0.5_chimm0.25_chiee20.01/}
+\end{center}
+with \texttt{domain.png} and \texttt{dispersive\_sheet.png}. The rows are
+$\mathrm{Re}\,E_z$ (TMz) and $\mathrm{Re}\,E_x$ (TEz). The columns are
+the Yee field, the analytic field, and their difference. The annotated
+packed-electric error is $9.62\%$ (TMz) and $8.91\%$ (TEz).
+
+\begin{figure}[ht]
+\centering
+\includegraphics[height=0.55\textheight]{../examples/fdfd/2d/dispersive_sheet_lam1_theta30_points20_height4_chiee0.5_chimm0.25_chiee20.01/domain.png}
+\caption{Dispersive periodic cell. The blue line is the sheet on a
+magnetic face. The green lines are the analytic trace on the $y$ ends.
+The dashed sides are periodic with phase one. The width is one
+transverse period at $30^\circ$.}
+\label{fig:dispersive-domain}
+\end{figure}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{../examples/fdfd/2d/dispersive_sheet_lam1_theta30_points20_height4_chiee0.5_chimm0.25_chiee20.01/dispersive_sheet.png}
+\caption{Dispersive sheet at $\chi_{ee0}=0.5$, $\chi_{ee2}=0.01$,
+$\chi_{mm}=0.25$, $\lambda=1$, $\theta=30^\circ$, and a height of
+$4\lambda$, on a cell one transverse period wide at $\Delta=0.05$.
+The rows are $\mathrm{Re}\,E_z$ (TMz) and $\mathrm{Re}\,E_x$ (TEz).
+The columns are the Yee field, the analytic field, and their difference.
+TMz uses $\chi_{ee}(k\sin\theta)$. TEz uses $\chi_{ee0}$. The annotated
+$L^2$ is the packed free electric vector.}
+\label{fig:dispersive-fields}
+\end{figure}
+
+\clearpage
 \section{Tests and later slices}
 \label{sec:tests}
 
-The suite is \texttt{pytest} from the project root, ninety-seven tests in
+The suite is \texttt{pytest} from the project root, one hundred one tests in
 \texttt{tests/}. Milestone~1 checks the curls, the adjoint, the cavity
 eigenvalues, the manufactured solve, the invariant and the CFL growth, and
 the fully discrete dispersion, with relative or absolute bars from
@@ -2055,12 +2115,22 @@ and it stays under $0.20$. The right-hand shadow stays under $0.55$.
 That shadow matches a uniform sheet of the same susceptibilities: the
 ends diffract. The $10\lambda$ figure is the example in
 Sec.~\ref{sec:ex-piecewise}.
+Polynomial electric dispersion, with $\chi_{ee0}=0.5$, $\chi_{ee2}=0.01$,
+and $\chi_{mm}=0.25$ on a periodic cell one transverse period wide at
+$30^\circ$ and a height of $4\lambda$, stays under $0.22$ (TMz) and
+$0.18$ (TEz) at $10$ cells per wavelength. TMz is compared with
+$\chi_{ee0}+\chi_{ee2}k^2\sin^2\theta$. TEz is compared with
+$\chi_{ee0}$. Four times that resolution drops both errors by more than
+half. A sheet that drops $\chi_{ee2}$ misses the TMz target by more than
+the dispersive operator does, at both resolutions. The example in
+Sec.~\ref{sec:ex-dispersive} annotates $9.62\%$ and $8.91\%$ at $20$
+cells per wavelength.
 
 A failing bar is a reason to refine the grid in that test, not to widen the bar.
 
 The formulation note already names the sheet work that remains
-to be coded: a spatially dispersive $\chi(k_t)$ and Lorentz poles
-on the sheet. The Fresnel
+to be coded: a denominator in $\chi(k_t)$, a $k_t^2$ term in
+$\chi_{mm}$, and Lorentz poles on the sheet. The Fresnel
 and dielectric-cylinder domain figures still draw an orange thickness as
 a layout. Those two solves use the Dirichlet trace. The open PEC cylinder
 of Sec.~\ref{sec:ex-pec}, the open dielectric cylinder of

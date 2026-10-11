@@ -15,7 +15,9 @@ The FDFD driver replaces
 that face. An optional ``x`` interval keeps a finite run of the magnetic
 samples; the default is the whole face. ``SymmetricSheet.piecewise`` gives
 each sample the susceptibilities of the piece that contains its ``x``.
-The jumps do not change. This module does not paint ``σ`` for it.
+The jumps do not change. ``SymmetricSheet.electric_dispersion`` realizes
+``chi_ee0 + chi_ee2 k_t²`` as that same jump with
+``chi_mm_nn = chi_ee2 k²``. This module does not paint ``σ`` for it.
 """
 
 from __future__ import annotations
@@ -43,7 +45,8 @@ class SymmetricSheet:
     samples on that face. Omitting both covers the whole face. ``pieces``
     replaces that one run: each piece carries its own five susceptibilities
     on its own half-open interval, and a sample outside every piece is not
-    on the sheet.
+    on the sheet. ``electric_dispersion`` builds the polynomial
+    ``chi_ee0 + chi_ee2 k_t²`` by setting ``chi_mm_nn = chi_ee2 k²``.
     """
 
     y: float
@@ -65,6 +68,39 @@ class SymmetricSheet:
         leave a gap, and may not overlap.
         """
         return cls(y, 0.0, 0.0, pieces=tuple(pieces))
+
+    @classmethod
+    def electric_dispersion(
+        cls,
+        y: float,
+        chi_ee_0: complex,
+        chi_ee_2: complex,
+        k: float,
+        *,
+        chi_mm: complex = 0.0,
+        x0: float | None = None,
+        x1: float | None = None,
+    ) -> SymmetricSheet:
+        """Polynomial ``χ_ee(k_t) = chi_ee_0 + chi_ee_2 k_t²`` as ``χ_mm^nn``.
+
+        The normal susceptibility is ``chi_ee_2 k²``, which is the
+        multi-wavenumber reduction of that polynomial. TMz carries the
+        term. TEz keeps ``chi_ee_0``. A denominator in ``k_t``, and a
+        ``k_t²`` term in ``χ_mm``, stay later.
+        """
+        if not np.isfinite(k) or float(k) <= 0.0:
+            raise ValueError(f"k must be positive, got {k}")
+        strength = complex(chi_ee_2)
+        if not np.isfinite(strength):
+            raise ValueError(f"chi_ee_2 must be finite, got {chi_ee_2}")
+        return cls(
+            y,
+            chi_ee_0,
+            chi_mm,
+            x0,
+            x1,
+            chi_mm_nn=strength * float(k) * float(k),
+        )
 
     def susceptibility(
         self, x: float

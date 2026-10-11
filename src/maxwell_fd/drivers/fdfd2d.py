@@ -40,7 +40,8 @@ unstretched curl, so every cut sample must sit where the PML stretch is 1.
 ``chi_em`` and ``chi_me`` add the magneto-electric coupling on both
 polarizations. A piecewise sheet assigns each cut sample the
 susceptibilities of the piece that contains its ``x``. The jumps stay
-the same.
+the same. Polynomial electric dispersion ``chi_ee0 + chi_ee2 k_t²`` is
+that jump with ``chi_mm_nn = chi_ee2 k²``.
 The sheet is not combined with an embedded conductor, and the spatial
 eigenproblem refuses it. Passing ``incident`` makes the unknown the
 scattered field: the continuous incident wave enters through the sheet rows.

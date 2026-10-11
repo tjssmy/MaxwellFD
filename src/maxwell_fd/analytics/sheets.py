@@ -17,6 +17,31 @@ from maxwell_fd.utils.constants import C0, ETA0
 ComplexArray = NDArray[np.complex128]
 
 
+def dispersive_susceptibility(
+    k_t: float,
+    chi_0: complex,
+    chi_2: complex = 0.0,
+    xi_2: complex = 0.0,
+) -> complex:
+    """Return ``(chi_0 + chi_2 k_t²) / (1 + xi_2 k_t²)``.
+
+    ``k_t`` is the tangential wavenumber. The value is one susceptibility
+    of a single plane wave. With ``xi_2 = 0`` the numerator is the
+    susceptibility carried by the normal-magnetic operator at
+    ``chi_mm_nn = chi_2 k²``. A vanishing denominator is rejected.
+    """
+    if not np.isfinite(k_t):
+        raise ValueError(f"k_t must be finite, got {k_t}")
+    tangential = float(k_t) ** 2
+    numerator = complex(chi_0) + complex(chi_2) * tangential
+    denominator = 1.0 + complex(xi_2) * tangential
+    if not np.isfinite(numerator) or not np.isfinite(denominator):
+        raise ValueError("susceptibility coefficients must be finite")
+    if abs(denominator) < 1e-30:
+        raise ValueError(f"dispersion denominator vanishes at k_t={k_t}")
+    return numerator / denominator
+
+
 def chi_ee_from_zs(zs: complex, k: float) -> complex:
     """``χ_ee = η0 / (j k Z_s)``, eq:chi-from-z."""
     impedance = complex(zs)

@@ -36,8 +36,9 @@ conductance is in the code. The non-dispersive GSTC subcell is the symmetric
 Yee cell: the face unknowns and the local system are derived here, and the
 tangential sheet is in the code. A Bloch phase on the periodic $x$ wrap
 is in the code. A piecewise sheet assigns each cut face its own
-susceptibilities. Spatially dispersive $\chi(k_t)$ is specified as a
-check, not as this slice's code.
+susceptibilities. Polynomial electric dispersion is in the code as
+the normal susceptibility $\chi_{mm}^{nn}=\chi_{ee2}k^2$. A denominator
+in $k_t$ remains a check.
 \end{abstract}
 
 \tableofcontents
@@ -844,9 +845,10 @@ in the table above the 3D curls. The Bloch cell is in the code: the
 forward $x$ wrap carries $e^{-j k_{B,x} a}$, and the unit cell is
 compared with the analytic oblique sheet. A piecewise sheet assigns
 each cut face its own susceptibilities and is compared with that
-piece's analytic field. A later slice adds the comparison this note
-already names and that the code does not yet run: spatially dispersive
-$\chi(k_t)$.
+piece's analytic field. Polynomial electric dispersion,
+$\chi_{ee0}+\chi_{ee2}k_t^2$, is the normal-susceptibility operator and
+is compared with the analytic oblique sheet. A denominator in $k_t$ and
+a $k_t^2$ term in $\chi_{mm}$ remain later.
 
 Prescribed external maps are checked by confirming that the samples the
 stepper reads are the samples the law was given. They are not a coupled
@@ -1053,9 +1055,12 @@ $10^{-8}$ of the specular amplitude, beside the analytic reflection and
 transmission. A piecewise sheet is in the code. Each cut sample takes
 the five susceptibilities of the piece that contains its $x$, and the
 jumps stay the same. A gap between pieces leaves those magnetic samples
-in the bulk curl. Spatially dispersive $\chi(k_t)$ is a separate
-operator, checked against MaxwellMOM's multi-$k_t$ reductions, and it
-is not a local $4\times 4$. Lorentz poles on the sheet remain later.
+in the bulk curl. Polynomial electric dispersion is in the code.
+$\chi_{ee}(k_t)=\chi_{ee0}+\chi_{ee2}k_t^2$ is the normal susceptibility
+$\chi_{mm}^{nn}=\chi_{ee2}k^2$, MaxwellMOM's multi-$k_t$ reduction of
+that polynomial. TMz carries the term and TEz keeps $\chi_{ee0}$. A
+denominator in $k_t$, a $k_t^2$ term in $\chi_{mm}$, and Lorentz poles
+on the sheet remain later.
 
 \section{Software architecture}
 \label{sec:architecture}
@@ -1170,15 +1175,17 @@ $\chi_{mm}^{nn}$, and the magneto-electric pair $\chi_{em}$, $\chi_{me}$
 are in the code and are compared with the analytic reflection and
 transmission. A piecewise run assigns each cut sample the five
 susceptibilities of the piece that contains its $x$. The jumps stay
-the same.
+the same. Polynomial electric dispersion $\chi_{ee0}+\chi_{ee2}k_t^2$
+is the same normal susceptibility with $\chi_{mm}^{nn}=\chi_{ee2}k^2$.
 \item Hertzian dipole, compared with the outgoing spherical wave, a
 2D paraxial Gaussian beam on a total-field/scattered-field split, and a
 2D TMz near-to-far integral compared with the leading Hankel wave of a
 line current. A Bloch phase $e^{-j k_{B,x} a}$ on the forward periodic
 $x$ wrap is in the code. A unit cell narrower than one transverse period
 is compared with the analytic oblique sheet.
-\item Profiling, Numba, iterative FDFD, GPU. Spatially dispersive
-$\chi(k_t)$ and Lorentz poles on the sheet remain later.
+\item Profiling, Numba, iterative FDFD, GPU. A denominator in
+$\chi(k_t)$, a $k_t^2$ term in $\chi_{mm}$, and Lorentz poles on the
+sheet remain later.
 \end{enumerate}
 
 Acceleration does not change the curls. Numba and CuPy, when they arrive,
