@@ -17,7 +17,9 @@ samples; the default is the whole face. ``SymmetricSheet.piecewise`` gives
 each sample the susceptibilities of the piece that contains its ``x``.
 The jumps do not change. ``SymmetricSheet.electric_dispersion`` realizes
 ``chi_ee0 + chi_ee2 k_t²`` as that same jump with
-``chi_mm_nn = chi_ee2 k²``. This module does not paint ``σ`` for it.
+``chi_mm_nn = chi_ee2 k²``. ``SymmetricSheet.magnetic_dispersion`` realizes
+``chi_mm0 + chi_mm2 k_t²`` as a second difference of the appended
+tangential ``H`` on the electric jump. This module does not paint ``σ``.
 """
 
 from __future__ import annotations
@@ -43,10 +45,13 @@ class SymmetricSheet:
     sits halfway between electric rows.
     ``x0`` and ``x1`` select the half-open run ``x0 <= x < x1`` of magnetic
     samples on that face. Omitting both covers the whole face. ``pieces``
-    replaces that one run: each piece carries its own five susceptibilities
+    replaces that one run: each piece carries its own susceptibilities
     on its own half-open interval, and a sample outside every piece is not
     on the sheet. ``electric_dispersion`` builds the polynomial
     ``chi_ee0 + chi_ee2 k_t²`` by setting ``chi_mm_nn = chi_ee2 k²``.
+    ``magnetic_dispersion`` stores ``chi_mm_2``, the coefficient of
+    ``k_t²`` in ``χ_mm``. Both polarizations difference the appended
+    tangential ``H``.
     """
 
     y: float
@@ -57,6 +62,7 @@ class SymmetricSheet:
     chi_mm_nn: complex = 0.0
     chi_em: complex = 0.0
     chi_me: complex = 0.0
+    chi_mm_2: complex = 0.0
     pieces: tuple[SymmetricSheet, ...] = ()
 
     @classmethod
@@ -85,8 +91,8 @@ class SymmetricSheet:
 
         The normal susceptibility is ``chi_ee_2 k²``, which is the
         multi-wavenumber reduction of that polynomial. TMz carries the
-        term. TEz keeps ``chi_ee_0``. A denominator in ``k_t``, and a
-        ``k_t²`` term in ``χ_mm``, stay later.
+        term. TEz keeps ``chi_ee_0``. A denominator in ``k_t`` stays
+        later. The polynomial in ``χ_mm`` is ``magnetic_dispersion``.
         """
         if not np.isfinite(k) or float(k) <= 0.0:
             raise ValueError(f"k must be positive, got {k}")
@@ -102,12 +108,37 @@ class SymmetricSheet:
             chi_mm_nn=strength * float(k) * float(k),
         )
 
+    @classmethod
+    def magnetic_dispersion(
+        cls,
+        y: float,
+        chi_mm_0: complex,
+        chi_mm_2: complex,
+        *,
+        chi_ee: complex = 0.0,
+        x0: float | None = None,
+        x1: float | None = None,
+    ) -> SymmetricSheet:
+        """Polynomial ``χ_mm(k_t) = chi_mm_0 + chi_mm_2 k_t²``.
+
+        ``chi_mm_2`` is stored as the coefficient of ``k_t²``. The
+        electric jump differences the appended tangential ``H`` in both
+        polarizations. The analytic sheet evaluates the polynomial at
+        the continuous tangential wavenumber. A denominator in ``k_t``
+        stays later.
+        """
+        strength = complex(chi_mm_2)
+        if not np.isfinite(strength):
+            raise ValueError(f"chi_mm_2 must be finite, got {chi_mm_2}")
+        return cls(y, chi_ee, chi_mm_0, x0, x1, chi_mm_2=strength)
+
     def susceptibility(
         self, x: float
-    ) -> tuple[complex, complex, complex, complex, complex] | None:
-        """``(chi_ee, chi_mm, chi_mm_nn, chi_em, chi_me)`` at magnetic sample ``x``.
+    ) -> tuple[complex, complex, complex, complex, complex, complex] | None:
+        """Susceptibilities at magnetic sample ``x``.
 
-        ``None`` means the sample is not on the sheet.
+        The tuple is ``(chi_ee, chi_mm, chi_mm_nn, chi_em, chi_me,
+        chi_mm_2)``. ``None`` means the sample is not on the sheet.
         """
         if self.pieces:
             for piece in self.pieces:
@@ -118,11 +149,19 @@ class SymmetricSheet:
                         piece.chi_mm_nn,
                         piece.chi_em,
                         piece.chi_me,
+                        piece.chi_mm_2,
                     )
             return None
         if self.x0 is not None and not (float(self.x0) <= x < float(self.x1)):
             return None
-        return (self.chi_ee, self.chi_mm, self.chi_mm_nn, self.chi_em, self.chi_me)
+        return (
+            self.chi_ee,
+            self.chi_mm,
+            self.chi_mm_nn,
+            self.chi_em,
+            self.chi_me,
+            self.chi_mm_2,
+        )
 
     def carries_normal(self) -> bool:
         """True when any face has a nonzero ``chi_mm_nn``."""
@@ -138,20 +177,22 @@ class SymmetricSheet:
         normal = complex(self.chi_mm_nn)
         cross_h = complex(self.chi_em)
         cross_e = complex(self.chi_me)
+        magnetic_2 = complex(self.chi_mm_2)
         if not all(
             np.isfinite(value)
-            for value in (electric, magnetic, normal, cross_h, cross_e)
+            for value in (electric, magnetic, normal, cross_h, cross_e, magnetic_2)
         ):
             raise ValueError(
                 "chi must be finite, "
                 f"got {self.chi_ee}, {self.chi_mm}, {self.chi_mm_nn}, "
-                f"{self.chi_em}, {self.chi_me}"
+                f"{self.chi_em}, {self.chi_me}, {self.chi_mm_2}"
             )
         object.__setattr__(self, "chi_ee", electric)
         object.__setattr__(self, "chi_mm", magnetic)
         object.__setattr__(self, "chi_mm_nn", normal)
         object.__setattr__(self, "chi_em", cross_h)
         object.__setattr__(self, "chi_me", cross_e)
+        object.__setattr__(self, "chi_mm_2", magnetic_2)
         try:
             packed = tuple(self.pieces)
         except TypeError as exc:
@@ -163,7 +204,8 @@ class SymmetricSheet:
             if self.x0 is not None or self.x1 is not None:
                 raise ValueError("piecewise sheet sets the extent on each piece")
             if any(
-                value != 0 for value in (electric, magnetic, normal, cross_h, cross_e)
+                value != 0
+                for value in (electric, magnetic, normal, cross_h, cross_e, magnetic_2)
             ):
                 raise ValueError("piecewise sheet carries chi on each piece")
             _validate_pieces(float(self.y), packed)

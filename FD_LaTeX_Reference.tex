@@ -37,8 +37,9 @@ Yee cell: the face unknowns and the local system are derived here, and the
 tangential sheet is in the code. A Bloch phase on the periodic $x$ wrap
 is in the code. A piecewise sheet assigns each cut face its own
 susceptibilities. Polynomial electric dispersion is in the code as
-the normal susceptibility $\chi_{mm}^{nn}=\chi_{ee2}k^2$. A denominator
-in $k_t$ remains a check.
+the normal susceptibility $\chi_{mm}^{nn}=\chi_{ee2}k^2$. Polynomial
+magnetic dispersion is the second difference of tangential $H$ on the
+electric jump. A denominator in $k_t$ remains a check.
 \end{abstract}
 
 \tableofcontents
@@ -847,8 +848,10 @@ compared with the analytic oblique sheet. A piecewise sheet assigns
 each cut face its own susceptibilities and is compared with that
 piece's analytic field. Polynomial electric dispersion,
 $\chi_{ee0}+\chi_{ee2}k_t^2$, is the normal-susceptibility operator and
-is compared with the analytic oblique sheet. A denominator in $k_t$ and
-a $k_t^2$ term in $\chi_{mm}$ remain later.
+is compared with the analytic oblique sheet. Polynomial magnetic
+dispersion, $\chi_{mm0}+\chi_{mm2}k_t^2$, is the second difference of
+tangential $H$ and is compared the same way. A denominator in $k_t$
+remains later.
 
 Prescribed external maps are checked by confirming that the samples the
 stepper reads are the samples the law was given. They are not a coupled
@@ -1053,14 +1056,21 @@ $\chi_{mm}^{nn}\partial_x H_y$ and the wrapped TEz link at the right edge.
 A uniform sheet on that cell is specular: the orders $m=\pm 1$ stay below
 $10^{-8}$ of the specular amplitude, beside the analytic reflection and
 transmission. A piecewise sheet is in the code. Each cut sample takes
-the five susceptibilities of the piece that contains its $x$, and the
-jumps stay the same. A gap between pieces leaves those magnetic samples
-in the bulk curl. Polynomial electric dispersion is in the code.
+the susceptibilities of the piece that contains its $x$, including
+$\chi_{mm2}$ when that piece sets it, and the jumps stay the same. A
+gap between pieces leaves those magnetic samples in the bulk curl.
+Polynomial electric dispersion is in the code.
 $\chi_{ee}(k_t)=\chi_{ee0}+\chi_{ee2}k_t^2$ is the normal susceptibility
 $\chi_{mm}^{nn}=\chi_{ee2}k^2$, MaxwellMOM's multi-$k_t$ reduction of
-that polynomial. TMz carries the term and TEz keeps $\chi_{ee0}$. A
-denominator in $k_t$, a $k_t^2$ term in $\chi_{mm}$, and Lorentz poles
-on the sheet remain later.
+that polynomial. TMz carries the term and TEz keeps $\chi_{ee0}$.
+Polynomial magnetic dispersion is in the code.
+$\chi_{mm}(k_t)=\chi_{mm0}+\chi_{mm2}k_t^2$ replaces $\chi_{mm} H$
+on the electric jump by $\chi_{mm0} H-\chi_{mm2}\partial_{xx} H$, in both
+polarizations. The discrete form is the centered second difference of
+the appended $H^\pm$, with the same Bloch weights as the normal term.
+A neighbor that leaves the cut or meets the PEC wall is refused when
+$\chi_{mm2}\ne 0$. The analytic target uses the continuous $k_t$.
+A denominator in $k_t$ and Lorentz poles on the sheet remain later.
 
 \section{Software architecture}
 \label{sec:architecture}
@@ -1177,6 +1187,8 @@ transmission. A piecewise run assigns each cut sample the five
 susceptibilities of the piece that contains its $x$. The jumps stay
 the same. Polynomial electric dispersion $\chi_{ee0}+\chi_{ee2}k_t^2$
 is the same normal susceptibility with $\chi_{mm}^{nn}=\chi_{ee2}k^2$.
+Polynomial magnetic dispersion $\chi_{mm0}+\chi_{mm2}k_t^2$ is a
+second difference of the appended tangential $H$, in both polarizations.
 \item Hertzian dipole, compared with the outgoing spherical wave, a
 2D paraxial Gaussian beam on a total-field/scattered-field split, and a
 2D TMz near-to-far integral compared with the leading Hankel wave of a
@@ -1184,8 +1196,7 @@ line current. A Bloch phase $e^{-j k_{B,x} a}$ on the forward periodic
 $x$ wrap is in the code. A unit cell narrower than one transverse period
 is compared with the analytic oblique sheet.
 \item Profiling, Numba, iterative FDFD, GPU. A denominator in
-$\chi(k_t)$, a $k_t^2$ term in $\chi_{mm}$, and Lorentz poles on the
-sheet remain later.
+$\chi(k_t)$ and Lorentz poles on the sheet remain later.
 \end{enumerate}
 
 Acceleration does not change the curls. Numba and CuPy, when they arrive,
