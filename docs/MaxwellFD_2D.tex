@@ -65,7 +65,8 @@ sample the susceptibilities of the piece that contains its $x$.
 Polynomial electric dispersion $\chi_{ee0}+\chi_{ee2}k_t^2$ is the
 normal susceptibility $\chi_{mm}^{nn}=\chi_{ee2}k^2$. Polynomial
 magnetic dispersion $\chi_{mm0}+\chi_{mm2}k_t^2$ is a second difference
-of the appended tangential $H$, in both polarizations.
+of the appended tangential $H$, in both polarizations. The denominator
+$1+\xi_{mm2}k_t^2$ is an auxiliary unknown on that jump.
 \end{abstract}
 
 \tableofcontents
@@ -158,6 +159,10 @@ susceptibility at $k\sin\theta$. TEz keeps $\chi_{ee0}$.
 susceptibility $\chi_{mm0}+\chi_{mm2}k_t^2$ is a second difference
 of the appended tangential $H$. Both polarizations are compared
 with that susceptibility at $k\sin\theta$.
+\item A rational magnetic susceptibility on a periodic cell. The
+quotient $(\chi_{mm0}+\chi_{mm2}k_t^2)/(1+\xi_{mm2}k_t^2)$ is one
+auxiliary per cut. Both polarizations are compared with that
+susceptibility at $k\sin\theta$.
 \end{enumerate}
 
 MaxwellFD does not import MaxwellMOM. The shared pieces are the time
@@ -234,14 +239,19 @@ and leaves TEz unchanged. On a periodic $x$ face the wrapped neighbors
 of that derivative, and the wrapped TEz link at the right edge, carry
 the same Bloch factor. A piecewise sheet assigns each magnetic sample
 the susceptibilities of the piece that contains its $x$, including
-$\chi_{mm2}$ when that piece sets it. The jumps
+$\chi_{mm2}$ and $\xi_{mm2}$ when that piece sets them. The jumps
 stay the same, and a sample outside every piece stays in the bulk curl.
 Polynomial electric dispersion $\chi_{ee0}+\chi_{ee2}k_t^2$ uses that
 same jump with $\chi_{mm}^{nn}=\chi_{ee2}k^2$. Polynomial magnetic
 dispersion $\chi_{mm0}+\chi_{mm2}k_t^2$ is a centered second difference
 of the appended tangential $H$ on the electric jump. Both polarizations
 carry it. A neighbor off the cut, or on the PEC wall, is refused when
-$\chi_{mm2}\ne 0$. The
+$\chi_{mm2}\ne 0$. A nonzero $\xi_{mm2}$ appends one auxiliary $Q$ per
+cut. The electric jump uses $Q$ in place of that second difference, and
+$(1-\xi_{mm2}\partial_{xx})Q$ equals the numerator on $H^-+H^+$. Both
+polarizations carry the auxiliary. The same neighbor is refused when
+$\xi_{mm2}\ne 0$. Every $\xi_{mm2}=0$ leaves the polynomial stencil
+unchanged. The
 resistive conductance is a separate update. An embedded PMC is a mask on magnetic samples inside
 the grid. The outer wall is still \texttt{Boundary.PEC},
 \texttt{Boundary.PERIODIC}, or \texttt{Boundary.PERIODIC\_X}.
@@ -934,6 +944,8 @@ that contains its $x$. Polynomial electric dispersion passes
 $\chi_{ee0}$ and $\chi_{mm}^{nn}=\chi_{ee2}k^2$ to that same sheet.
 Polynomial magnetic dispersion stores $\chi_{mm2}$ and differences the
 appended tangential $H$ on the electric jump, in both polarizations.
+A nonzero $\xi_{mm2}$ appends one auxiliary per cut and replaces that
+difference.
 
 The real eigenproblem is \texttt{spatial\_operator}. It returns the pair
 $(K,M)$ of the unstretched curl and refuses an active PML. TEz results
@@ -960,6 +972,7 @@ python examples/fdfd/2d/finite_sheet.py
 python examples/fdfd/2d/piecewise_sheet.py
 python examples/fdfd/2d/dispersive_sheet.py
 python examples/fdfd/2d/magnetic_dispersive_sheet.py
+python examples/fdfd/2d/magnetic_rational_sheet.py
 python examples/fdfd/2d/periodic_sheet.py
 python examples/fdfd/3d/cavity.py
 python examples/fdfd/3d/dielectric_sphere.py
@@ -984,8 +997,8 @@ inner edge together. The 3D cavity figure is one panel per pure mode.
 The open sphere is one row of $\mathrm{Re}\,E_x$ on the $xz$ plane
 through the center: FD, Mie, and FD$-$Mie. The resistive sheet and the symmetric sheet use the columns FD, Sheet,
 and FD$-$Sheet, with $\mathrm{Re}\,E_z$ and $\mathrm{Re}\,E_x$. The periodic
-oblique sheet, the dispersive sheet, and the magnetic dispersive sheet
-use FD, Analytic, and FD$-$Analytic. The finite sheet and
+oblique sheet, the dispersive sheet, the magnetic dispersive sheet, and
+the rational magnetic sheet use FD, Analytic, and FD$-$Analytic. The finite sheet and
 the piecewise sheet use Incident, Scattered, and Total.
 
 \subsection{Fresnel slab}
@@ -2079,10 +2092,59 @@ electric vector.}
 \end{figure}
 
 \clearpage
+\subsection{Rational magnetic periodic sheet}
+\label{sec:ex-rational}
+
+\begin{verbatim}
+python examples/fdfd/2d/magnetic_rational_sheet.py
+\end{verbatim}
+
+The cell is one transverse period wide and $4\lambda$ tall, at $20$ cells
+per wavelength and $\theta=30^\circ$. Phase one on the periodic $x$ wrap
+closes the oblique wave. The $y$ ends carry the analytic trace.
+$\chi_{ee}=0.5$, $\chi_{mm0}=0.25$, $\chi_{mm2}=0.04$, and
+$\xi_{mm2}=0.04$. One auxiliary per cut replaces $\chi_{mm} H$ on the
+electric jump, in both polarizations. At this angle the susceptibility
+is $0.462$.
+
+The run writes
+\begin{center}
+\path{magnetic_rational_sheet_lam1_theta30_points20_height4_chiee0.5_chimm0.25_chimm20.04_ximm20.04/}
+\end{center}
+with \texttt{domain.png} and \texttt{magnetic\_rational\_sheet.png}.
+The rows are $\mathrm{Re}\,E_z$ (TMz) and $\mathrm{Re}\,E_x$ (TEz).
+The columns are the Yee field, the analytic field, and their difference.
+The annotated packed-electric error is $7.68\%$ (TMz) and $7.80\%$ (TEz).
+
+\begin{figure}[ht]
+\centering
+\includegraphics[height=0.55\textheight]{../examples/fdfd/2d/magnetic_rational_sheet_lam1_theta30_points20_height4_chiee0.5_chimm0.25_chimm20.04_ximm20.04/domain.png}
+\caption{Rational magnetic periodic cell. The blue line is the sheet on
+a magnetic face. The green lines are the analytic trace on the $y$ ends.
+The dashed sides are periodic with phase one. The width is one
+transverse period at $30^\circ$.}
+\label{fig:rational-domain}
+\end{figure}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{../examples/fdfd/2d/magnetic_rational_sheet_lam1_theta30_points20_height4_chiee0.5_chimm0.25_chimm20.04_ximm20.04/magnetic_rational_sheet.png}
+\caption{Rational magnetic sheet at $\chi_{ee}=0.5$, $\chi_{mm0}=0.25$,
+$\chi_{mm2}=0.04$, $\xi_{mm2}=0.04$, $\lambda=1$, $\theta=30^\circ$,
+and a height of $4\lambda$, on a cell one transverse period wide at
+$\Delta=0.05$. The rows are $\mathrm{Re}\,E_z$ (TMz) and
+$\mathrm{Re}\,E_x$ (TEz). The columns are the Yee field, the analytic
+field, and their difference. Both polarizations use
+$\chi_{mm}(k\sin\theta)$. The annotated $L^2$ is the packed free
+electric vector.}
+\label{fig:rational-fields}
+\end{figure}
+
+\clearpage
 \section{Tests and later slices}
 \label{sec:tests}
 
-The suite is \texttt{pytest} from the project root, one hundred four tests in
+The suite is \texttt{pytest} from the project root, one hundred seven tests in
 \texttt{tests/}. Milestone~1 checks the curls, the adjoint, the cavity
 eigenvalues, the manufactured solve, the invariant and the CFL growth, and
 the fully discrete dispersion, with relative or absolute bars from
@@ -2196,11 +2258,21 @@ drops both errors by more than half. A sheet that drops $\chi_{mm2}$
 misses that target by more than the operator does, at both resolutions
 and in both polarizations. The example in Sec.~\ref{sec:ex-magnetic}
 annotates $8.35\%$ and $8.12\%$ at $20$ cells per wavelength.
+The magnetic denominator, with $\chi_{ee}=0.5$, $\chi_{mm0}=0.25$,
+$\chi_{mm2}=0.04$, and $\xi_{mm2}=0.04$ on that same periodic cell,
+stays under $0.18$ (TMz) and $0.21$ (TEz) at $10$ cells per wavelength.
+Both are compared with
+$(\chi_{mm0}+\chi_{mm2}k^2\sin^2\theta)/(1+\xi_{mm2}k^2\sin^2\theta)$.
+Four times that resolution drops both errors by more than half. A
+polynomial sheet, $\xi_{mm2}=0$, misses that target by more than the
+operator does, at both resolutions and in both polarizations. The
+example in Sec.~\ref{sec:ex-rational} annotates $7.68\%$ and $7.80\%$
+at $20$ cells per wavelength.
 
 A failing bar is a reason to refine the grid in that test, not to widen the bar.
 
 The formulation note already names the sheet work that remains
-to be coded: a denominator in $\chi(k_t)$ and Lorentz poles on the sheet. The Fresnel
+to be coded: Lorentz poles on the sheet. The Fresnel
 and dielectric-cylinder domain figures still draw an orange thickness as
 a layout. Those two solves use the Dirichlet trace. The open PEC cylinder
 of Sec.~\ref{sec:ex-pec}, the open dielectric cylinder of

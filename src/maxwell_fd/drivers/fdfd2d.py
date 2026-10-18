@@ -43,7 +43,8 @@ susceptibilities of the piece that contains its ``x``. The jumps stay
 the same. Polynomial electric dispersion ``chi_ee0 + chi_ee2 k_t²`` is
 that jump with ``chi_mm_nn = chi_ee2 k²``. Polynomial magnetic dispersion
 ``chi_mm0 + chi_mm2 k_t²`` is a second difference of the appended
-tangential ``H`` on the electric jump, in both polarizations.
+tangential ``H`` on the electric jump, in both polarizations. A nonzero
+``xi_mm_2`` appends one auxiliary per cut and replaces that difference.
 The sheet is not combined with an embedded conductor, and the spatial
 eigenproblem refuses it. Passing ``incident`` makes the unknown the
 scattered field: the continuous incident wave enters through the sheet rows.

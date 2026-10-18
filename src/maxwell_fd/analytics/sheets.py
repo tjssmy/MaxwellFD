@@ -30,7 +30,9 @@ def dispersive_susceptibility(
     electric susceptibility carried by the normal-magnetic operator at
     ``chi_mm_nn = chi_2 k²``, and it is the magnetic susceptibility
     whose ``k_t²`` term is ``−∂_xx`` of the averaged tangential ``H``.
-    A vanishing denominator is rejected.
+    A nonzero magnetic ``xi_2`` is an auxiliary unknown on each cut:
+    ``(1 − xi_2 ∂_xx) Q = (chi_0 − chi_2 ∂_xx)(H⁻ + H⁺)``. A vanishing
+    denominator is rejected.
     """
     if not np.isfinite(k_t):
         raise ValueError(f"k_t must be finite, got {k_t}")

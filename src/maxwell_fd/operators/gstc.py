@@ -23,7 +23,13 @@ magneto-electric stencils are unchanged. ``chi_mm_2`` adds a centered
 second difference of the appended tangential ``H`` to the electric jump,
 in both polarizations. On a plane wave ``k_t²`` is ``−∂_xx``. A neighbor
 that is not a cut is refused when that coefficient is nonzero, and a
-wrap uses the same Bloch weight as the normal derivative.
+wrap uses the same Bloch weight as the normal derivative. A nonzero
+``xi_mm_2`` appends one auxiliary ``Q`` after every ``(H^-, H^+)`` pair.
+The electric jump then uses ``Q`` in place of the magnetic numerator, and
+``(1 − xi_mm_2 ∂_xx) Q = (chi_mm − chi_mm_2 ∂_xx)(H^- + H^+)``. Every
+``xi_mm_2`` zero leaves that auxiliary out, and the polynomial stencil
+is unchanged. A neighbor that is not a cut is refused when ``xi_mm_2``
+is nonzero.
 ``incident_load`` moves a continuous incident wave onto the sheet rows.
 The electric rows of that load stay zero: the incident field already
 satisfies the bulk stencil up to Yee dispersion.
@@ -106,13 +112,16 @@ def incident_load(
     j_plus = (face + 1) % grid.ny if periodic_y else face + 1
     sample = "hz" if grid.polarization is Polarization.TEZ else "hx"
     x_samples = grid.coordinates(sample)[0]
-    rhs = np.zeros(layout.n_e + 2 * len(cuts), dtype=np.complex128)
+    chis = [_chi_at(sheet, float(x_samples[cut.i])) for cut in cuts]
+    rational = any(chi[6] != 0 for chi in chis)
+    extra = len(cuts) if rational else 0
+    rhs = np.zeros(layout.n_e + 2 * len(cuts) + extra, dtype=np.complex128)
     if grid.polarization is Polarization.TEZ:
         tangential = _complex_field(electric, "ex", grid.shapes()["ex"])
         normal_h = _complex_field({"hz": magnetic}, "hz", grid.shapes()["hz"])
         for k, cut in enumerate(cuts):
-            alpha, beta, kappa_em, kappa_me, _gamma, eta = _jump_coefficients(
-                _chi_at(sheet, float(x_samples[cut.i])), omega, grid.dx
+            alpha, beta, kappa_em, kappa_me, _gamma, eta, xi = _jump_coefficients(
+                chis[k], omega, grid.dx
             )
             e_minus = tangential[cut.i, face]
             e_plus = tangential[cut.i, j_plus]
@@ -120,20 +129,25 @@ def incident_load(
             rhs[layout.n_e + 2 * k] = (
                 alpha * (e_minus + e_plus) + 2.0 * kappa_em * h_face
             )
-            rhs[layout.n_e + 2 * k + 1] = (
-                -(e_plus - e_minus)
-                + _dispersive_h_load(
+            magnetic_part = 0.0
+            if xi == 0:
+                magnetic_part = _dispersive_h_load(
                     grid, cut_at, free, normal_h, face, cut.i, beta, eta, -1.0
                 )
-                - kappa_me * (e_minus + e_plus)
+            rhs[layout.n_e + 2 * k + 1] = (
+                -(e_plus - e_minus) + magnetic_part - kappa_me * (e_minus + e_plus)
             )
+            if rational:
+                rhs[layout.n_e + 2 * len(cuts) + k] = _denominator_incident(
+                    grid, cut_at, free, normal_h, face, cut.i, chis[k]
+                )
         return rhs
     tangential = _complex_field(electric, "ez", grid.shapes()["ez"])
     normal_h = _complex_field({"hx": magnetic}, "hx", grid.shapes()["hx"])
     ez_id = _global_ids(layout.e)[0] if sheet.carries_normal() else None
     for k, cut in enumerate(cuts):
-        alpha, beta, kappa_em, kappa_me, gamma, eta = _jump_coefficients(
-            _chi_at(sheet, float(x_samples[cut.i])), omega, grid.dx
+        alpha, beta, kappa_em, kappa_me, gamma, eta, xi = _jump_coefficients(
+            chis[k], omega, grid.dx
         )
         e_minus = tangential[cut.i, face]
         e_plus = tangential[cut.i, j_plus]
@@ -144,13 +158,18 @@ def incident_load(
         rhs[layout.n_e + 2 * k] = (
             -alpha * (e_minus + e_plus) - normal + 2.0 * kappa_em * h_face
         )
-        rhs[layout.n_e + 2 * k + 1] = (
-            -(e_plus - e_minus)
-            + _dispersive_h_load(
+        magnetic_part = 0.0
+        if xi == 0:
+            magnetic_part = _dispersive_h_load(
                 grid, cut_at, free, normal_h, face, cut.i, beta, eta, 1.0
             )
-            - kappa_me * (e_minus + e_plus)
+        rhs[layout.n_e + 2 * k + 1] = (
+            -(e_plus - e_minus) + magnetic_part - kappa_me * (e_minus + e_plus)
         )
+        if rational:
+            rhs[layout.n_e + 2 * len(cuts) + k] = _denominator_incident(
+                grid, cut_at, free, normal_h, face, cut.i, chis[k]
+            )
     return rhs
 
 
@@ -212,9 +231,11 @@ def _augment(
     x_samples = grid.coordinates(sample)[0]
     cut_at = {cut.i: index for index, cut in enumerate(cuts)}
     free = _free_magnetic(grid, layout, face)
+    chis = [_chi_at(sheet, float(x_samples[cut.i])) for cut in cuts]
+    rational = any(chi[6] != 0 for chi in chis)
     for k, cut in enumerate(cuts):
-        alpha, beta, kappa_em, kappa_me, gamma, eta = _jump_coefficients(
-            _chi_at(sheet, float(x_samples[cut.i])), omega, dx
+        alpha, beta, kappa_em, kappa_me, gamma, eta, xi = _jump_coefficients(
+            chis[k], omega, dx
         )
         hm = n_e + 2 * k
         hp = hm + 1
@@ -248,16 +269,48 @@ def _augment(
             if gamma != 0 and ez_id is not None:
                 for column, weight in _nn_columns(grid, ez_id, cut.i, face, j_plus):
                     _add(rows, cols, data, hm, column, gamma * weight)
-        _equation(
-            rows,
-            cols,
-            data,
-            n_e + 2 * k + 1,
-            (cut.e_minus, cut.e_plus, hm, hp),
-            (-1.0 + kappa_me, 1.0 + kappa_me, center, center),
-        )
-        if eta != 0:
-            _add_mm2_neighbors(
+        if xi == 0:
+            _equation(
+                rows,
+                cols,
+                data,
+                n_e + 2 * k + 1,
+                (cut.e_minus, cut.e_plus, hm, hp),
+                (-1.0 + kappa_me, 1.0 + kappa_me, center, center),
+            )
+            if eta != 0:
+                _add_mm2_neighbors(
+                    rows,
+                    cols,
+                    data,
+                    grid,
+                    cut_at,
+                    free,
+                    n_e,
+                    cut.i,
+                    n_e + 2 * k + 1,
+                    eta,
+                    side,
+                )
+        else:
+            _equation(
+                rows,
+                cols,
+                data,
+                n_e + 2 * k + 1,
+                (cut.e_minus, cut.e_plus, hm, hp),
+                (-1.0 + kappa_me, 1.0 + kappa_me, 0.0, 0.0),
+            )
+            _add(
+                rows,
+                cols,
+                data,
+                n_e + 2 * k + 1,
+                n_e + 2 * n_cut + k,
+                side * 1j * float(omega) * MU0 / 2.0,
+            )
+        if rational:
+            _add_denominator_row(
                 rows,
                 cols,
                 data,
@@ -265,12 +318,13 @@ def _augment(
                 cut_at,
                 free,
                 n_e,
+                n_cut,
+                k,
                 cut.i,
-                n_e + 2 * k + 1,
-                eta,
-                side,
+                chis[k],
+                dx,
             )
-    size = n_e + 2 * n_cut
+    size = n_e + 2 * n_cut + (n_cut if rational else 0)
     return sparse.coo_matrix(
         (np.concatenate(data), (np.concatenate(rows), np.concatenate(cols))),
         shape=(size, size),
@@ -288,7 +342,7 @@ def _cross_kappa(chi: complex, omega: float) -> complex:
 
 def _chi_at(
     sheet: SymmetricSheet, x: float
-) -> tuple[complex, complex, complex, complex, complex, complex]:
+) -> tuple[complex, complex, complex, complex, complex, complex, complex]:
     found = sheet.susceptibility(x)
     if found is None:
         raise RuntimeError("a cut sample has no susceptibility")
@@ -296,12 +350,12 @@ def _chi_at(
 
 
 def _jump_coefficients(
-    chi: tuple[complex, complex, complex, complex, complex, complex],
+    chi: tuple[complex, complex, complex, complex, complex, complex, complex],
     omega: float,
     dx: float,
-) -> tuple[complex, complex, complex, complex, complex, complex]:
-    """``(α, β, κ_em, κ_me, γ, η)`` of one cut face."""
-    chi_ee, chi_mm, chi_nn, chi_em, chi_me, chi_mm_2 = chi
+) -> tuple[complex, complex, complex, complex, complex, complex, complex]:
+    """``(α, β, κ_em, κ_me, γ, η, ξ)`` of one cut face."""
+    chi_ee, chi_mm, chi_nn, chi_em, chi_me, chi_mm_2, xi_mm_2 = chi
     alpha = 1j * float(omega) * EPS0 * complex(chi_ee) / 2.0
     beta = 1j * float(omega) * MU0 * complex(chi_mm) / 2.0
     return (
@@ -311,6 +365,7 @@ def _jump_coefficients(
         _cross_kappa(chi_me, omega),
         _nn_gamma(chi_nn, omega, dx),
         _mm2_eta(chi_mm_2, omega, dx),
+        complex(xi_mm_2),
     )
 
 
@@ -352,11 +407,13 @@ def _free_magnetic(grid: YeeGrid2D, layout: Layout, face: int) -> set[int]:
     return {i for i in range(magnetic.shape[0]) if int(magnetic[i, face]) >= 0}
 
 
-def _require_neighbor(index: int, cut_at: dict[int, int], free: set[int]) -> int:
+def _require_neighbor(
+    index: int, cut_at: dict[int, int], free: set[int], name: str = "chi_mm_2"
+) -> int:
     if index < 0 or index not in free:
-        raise ValueError("chi_mm_2 reaches the PEC wall")
+        raise ValueError(f"{name} reaches the PEC wall")
     if index not in cut_at:
-        raise ValueError("chi_mm_2 reaches past the sheet")
+        raise ValueError(f"{name} reaches past the sheet")
     return cut_at[index]
 
 
@@ -379,6 +436,90 @@ def _add_mm2_neighbors(
         hm = n_e + 2 * neighbor
         _add(rows, cols, data, row, hm, coeff)
         _add(rows, cols, data, row, hm + 1, coeff)
+
+
+def _add_denominator_row(
+    rows: list[NDArray],
+    cols: list[NDArray],
+    data: list[NDArray],
+    grid: YeeGrid2D,
+    cut_at: dict[int, int],
+    free: set[int],
+    n_e: int,
+    n_cut: int,
+    k: int,
+    i: int,
+    chi: tuple[complex, complex, complex, complex, complex, complex, complex],
+    dx: float,
+) -> None:
+    """``(1 − ξ ∂_xx) Q − (χ_mm − χ_mm2 ∂_xx)(H⁻ + H⁺) = 0``.
+
+    ``Q`` is the auxiliary at this cut. The centered difference puts
+    ``+2/Δx²`` on the cut and ``−1/Δx²`` on each neighbor, with the Bloch
+    weight on a wrap. ``ξ = 0`` reduces the row to the polynomial numerator.
+    """
+    _chi_ee, chi_mm, _chi_nn, _chi_em, _chi_me, chi_mm_2, xi_mm_2 = chi
+    spacing = float(dx) * float(dx)
+    zeta_xi = complex(xi_mm_2) / spacing
+    zeta_chi = complex(chi_mm_2) / spacing
+    row = n_e + 2 * n_cut + k
+    hm = n_e + 2 * k
+    _add(rows, cols, data, row, row, 1.0 + 2.0 * zeta_xi)
+    center_s = -(complex(chi_mm) + 2.0 * zeta_chi)
+    _add(rows, cols, data, row, hm, center_s)
+    _add(rows, cols, data, row, hm + 1, center_s)
+    if zeta_xi == 0 and zeta_chi == 0:
+        return
+    name = "xi_mm_2" if zeta_xi != 0 else "chi_mm_2"
+    for index, weight in _mm2_neighbors(grid, i):
+        neighbor = _require_neighbor(index, cut_at, free, name)
+        if zeta_xi != 0:
+            _add(
+                rows,
+                cols,
+                data,
+                row,
+                n_e + 2 * n_cut + neighbor,
+                -zeta_xi * weight,
+            )
+        if zeta_chi != 0:
+            neighbor_h = n_e + 2 * neighbor
+            _add(rows, cols, data, row, neighbor_h, zeta_chi * weight)
+            _add(rows, cols, data, row, neighbor_h + 1, zeta_chi * weight)
+
+
+def _denominator_incident(
+    grid: YeeGrid2D,
+    cut_at: dict[int, int],
+    free: set[int],
+    magnetic: NDArray,
+    face: int,
+    i: int,
+    chi: tuple[complex, complex, complex, complex, complex, complex, complex],
+) -> complex:
+    """Minus the auxiliary row on an incident wave with ``Q = 0`` and ``H⁺ = H⁻``.
+
+    The incident field is read by sample index. ``ξ`` does not enter: the
+    incident auxiliary is zero, so only the numerator acts on ``H``.
+    """
+    _chi_ee, chi_mm, _chi_nn, _chi_em, _chi_me, chi_mm_2, xi_mm_2 = chi
+    h_face = complex(magnetic[i, face])
+    spacing = float(grid.dx) * float(grid.dx)
+    zeta_chi = complex(chi_mm_2) / spacing
+    if xi_mm_2 != 0 or zeta_chi != 0:
+        (left, left_weight), (right, right_weight) = _mm2_neighbors(grid, i)
+        name = "xi_mm_2" if xi_mm_2 != 0 else "chi_mm_2"
+        _require_neighbor(left, cut_at, free, name)
+        _require_neighbor(right, cut_at, free, name)
+        if zeta_chi != 0:
+            h_left = complex(magnetic[left, face])
+            h_right = complex(magnetic[right, face])
+            return (
+                2.0 * (complex(chi_mm) + 2.0 * zeta_chi) * h_face
+                - 2.0 * zeta_chi * left_weight * h_left
+                - 2.0 * zeta_chi * right_weight * h_right
+            )
+    return 2.0 * complex(chi_mm) * h_face
 
 
 def _dispersive_h_load(
